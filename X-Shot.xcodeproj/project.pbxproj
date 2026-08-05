@@ -1,0 +1,189 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 60;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		200000000000000000000001 /* main.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000001 /* main.swift */; };
+		200000000000000000000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000002 /* AppDelegate.swift */; };
+		200000000000000000000003 /* HotKeyManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000003 /* HotKeyManager.swift */; };
+		200000000000000000000004 /* CaptureCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000004 /* CaptureCoordinator.swift */; };
+		200000000000000000000005 /* EditorModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000005 /* EditorModel.swift */; };
+		200000000000000000000006 /* EditorRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000006 /* EditorRenderer.swift */; };
+		200000000000000000000007 /* OverlayEditor.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000007 /* OverlayEditor.swift */; };
+		200000000000000000000008 /* XShotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 300000000000000000000009 /* XShotTests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		400000000000000000000001 = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 500000000000000000000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 100000000000000000000001;
+			remoteInfo = "X-Shot";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXFileReference section */
+		300000000000000000000001 /* main.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = main.swift; sourceTree = "<group>"; };
+		300000000000000000000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
+		300000000000000000000003 /* HotKeyManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HotKeyManager.swift; sourceTree = "<group>"; };
+		300000000000000000000004 /* CaptureCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CaptureCoordinator.swift; sourceTree = "<group>"; };
+		300000000000000000000005 /* EditorModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorModel.swift; sourceTree = "<group>"; };
+		300000000000000000000006 /* EditorRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorRenderer.swift; sourceTree = "<group>"; };
+		300000000000000000000007 /* OverlayEditor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OverlayEditor.swift; sourceTree = "<group>"; };
+		300000000000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		300000000000000000000009 /* XShotTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XShotTests.swift; sourceTree = "<group>"; };
+		30000000000000000000000A /* X-Shot.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "X-Shot.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		30000000000000000000000B /* X-ShotTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = "X-ShotTests.xctest"; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		600000000000000000000001 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		600000000000000000000002 = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		700000000000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				700000000000000000000002 /* X-Shot */,
+				700000000000000000000003 /* X-ShotTests */,
+				700000000000000000000004 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		700000000000000000000002 /* X-Shot */ = {
+			isa = PBXGroup;
+			children = (
+				300000000000000000000001 /* main.swift */,
+				300000000000000000000002 /* AppDelegate.swift */,
+				300000000000000000000003 /* HotKeyManager.swift */,
+				300000000000000000000004 /* CaptureCoordinator.swift */,
+				300000000000000000000005 /* EditorModel.swift */,
+				300000000000000000000006 /* EditorRenderer.swift */,
+				300000000000000000000007 /* OverlayEditor.swift */,
+				300000000000000000000008 /* Info.plist */,
+			);
+			path = "X-Shot";
+			sourceTree = "<group>";
+		};
+		700000000000000000000003 /* X-ShotTests */ = {
+			isa = PBXGroup;
+			children = (300000000000000000000009 /* XShotTests.swift */);
+			path = "X-ShotTests";
+			sourceTree = "<group>";
+		};
+		700000000000000000000004 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				30000000000000000000000A /* X-Shot.app */,
+				30000000000000000000000B /* X-ShotTests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		100000000000000000000001 /* X-Shot */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 800000000000000000000001;
+			buildPhases = (
+				900000000000000000000001 /* Sources */,
+				600000000000000000000001 /* Frameworks */,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = "X-Shot";
+			productName = "X-Shot";
+			productReference = 30000000000000000000000A /* X-Shot.app */;
+			productType = "com.apple.product-type.application";
+		};
+		100000000000000000000002 /* X-ShotTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 800000000000000000000002;
+			buildPhases = (
+				900000000000000000000002 /* Sources */,
+				600000000000000000000002 /* Frameworks */,
+			);
+			buildRules = ();
+			dependencies = (A00000000000000000000001 /* PBXTargetDependency */);
+			name = "X-ShotTests";
+			productName = "X-ShotTests";
+			productReference = 30000000000000000000000B /* X-ShotTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		500000000000000000000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 2620;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					100000000000000000000001 = {CreatedOnToolsVersion = 26.2;};
+					100000000000000000000002 = {CreatedOnToolsVersion = 26.2; TestTargetID = 100000000000000000000001;};
+				};
+			};
+			buildConfigurationList = 800000000000000000000003;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (en, Base);
+			mainGroup = 700000000000000000000001;
+			productRefGroup = 700000000000000000000004;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (100000000000000000000001 /* X-Shot */, 100000000000000000000002 /* X-ShotTests */);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		900000000000000000000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				200000000000000000000001,
+				200000000000000000000002,
+				200000000000000000000003,
+				200000000000000000000004,
+				200000000000000000000005,
+				200000000000000000000006,
+				200000000000000000000007,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		900000000000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (200000000000000000000008);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A00000000000000000000001 /* PBXTargetDependency */ = {isa = PBXTargetDependency; target = 100000000000000000000001 /* X-Shot */; targetProxy = 400000000000000000000001; };
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		B00000000000000000000001 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; ONLY_ACTIVE_ARCH = YES; SDKROOT = macosx; SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG; SWIFT_OPTIMIZATION_LEVEL = "-Onone";}; name = Debug; };
+		B00000000000000000000002 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {CLANG_ENABLE_MODULES = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; SDKROOT = macosx; SWIFT_COMPILATION_MODE = wholemodule; SWIFT_OPTIMIZATION_LEVEL = "-O";}; name = Release; };
+		B00000000000000000000003 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; CURRENT_PROJECT_VERSION = 1; ENABLE_TESTABILITY = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "X-Shot/Info.plist"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 1.0; PRODUCT_BUNDLE_IDENTIFIER = com.azzamjiul.xshot; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0;}; name = Debug; };
+		B00000000000000000000004 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {ARCHS = arm64; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO; CODE_SIGN_STYLE = Manual; CURRENT_PROJECT_VERSION = 1; ENABLE_HARDENED_RUNTIME = YES; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = "X-Shot/Info.plist"; LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/../Frameworks"; MACOSX_DEPLOYMENT_TARGET = 14.0; MARKETING_VERSION = 1.0; ONLY_ACTIVE_ARCH = NO; PRODUCT_BUNDLE_IDENTIFIER = com.azzamjiul.xshot; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0;}; name = Release; };
+		B00000000000000000000005 /* Debug */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.azzamjiul.xshot.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/X-Shot.app/Contents/MacOS/X-Shot";}; name = Debug; };
+		B00000000000000000000006 /* Release */ = {isa = XCBuildConfiguration; buildSettings = {BUNDLE_LOADER = "$(TEST_HOST)"; CODE_SIGN_IDENTITY = "-"; CODE_SIGN_STYLE = Manual; GENERATE_INFOPLIST_FILE = YES; MACOSX_DEPLOYMENT_TARGET = 14.0; PRODUCT_BUNDLE_IDENTIFIER = com.azzamjiul.xshot.tests; PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_VERSION = 5.0; TEST_HOST = "$(BUILT_PRODUCTS_DIR)/X-Shot.app/Contents/MacOS/X-Shot";}; name = Release; };
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		800000000000000000000001 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000003 /* Debug */, B00000000000000000000004 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		800000000000000000000002 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000005 /* Debug */, B00000000000000000000006 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		800000000000000000000003 = {isa = XCConfigurationList; buildConfigurations = (B00000000000000000000001 /* Debug */, B00000000000000000000002 /* Release */); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+/* End XCConfigurationList section */
+	};
+	rootObject = 500000000000000000000001 /* Project object */;
+}
