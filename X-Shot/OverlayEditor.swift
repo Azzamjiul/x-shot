@@ -11,7 +11,12 @@ final class OverlayPanel: NSPanel {
 final class OverlayEditorController {
     private let panel: OverlayPanel
     private let canvas: EditorCanvasView
-    private let onClose: () -> Void
+    private let selectionOnly: Bool
+    private let onCapture: ((Data, CGRect) -> Void)?
+    private let onCopy: ((Data) -> Bool)?
+    private let onSave: ((Data) -> Bool)?
+    private let onClose: (Data?) -> Void
+    private let originalPNGData: Data?
     private var didClose = false
 
     init(
@@ -21,8 +26,18 @@ final class OverlayEditorController {
         imageBounds: CGRect? = nil,
         initialSelection: CGRect? = nil,
         selectionLocked: Bool = false,
-        onClose: @escaping () -> Void
+        selectionOnly: Bool = false,
+        originalPNGData: Data? = nil,
+        onCapture: ((Data, CGRect) -> Void)? = nil,
+        onCopy: ((Data) -> Bool)? = nil,
+        onSave: ((Data) -> Bool)? = nil,
+        onClose: @escaping (Data?) -> Void
     ) {
+        self.selectionOnly = selectionOnly
+        self.originalPNGData = originalPNGData
+        self.onCapture = onCapture
+        self.onCopy = onCopy
+        self.onSave = onSave
         self.onClose = onClose
         panel = OverlayPanel(
             contentRect: screen.frame,
@@ -41,18 +56,23 @@ final class OverlayEditorController {
             backgroundImage: previewBackground,
             imageBounds: resolvedImageBounds,
             initialSelection: initialSelection,
-            selectionLocked: selectionLocked
+            selectionLocked: selectionLocked,
+            selectionOnly: selectionOnly,
+            canvasSize: screen.frame.size,
+            originalPNGData: originalPNGData
         )
 
         panel.contentView = canvas
         panel.setFrame(screen.frame, display: false)
-        panel.level = .screenSaver
+        panel.level = selectionOnly ? .screenSaver : .floating
         panel.backgroundColor = .black
         panel.isOpaque = true
         panel.hasShadow = false
+        panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
         canvas.onCancel = { [weak self] in self?.close() }
+        canvas.onCapture = { [weak self] data, selection in self?.capture(data, selection: selection) }
         canvas.onCopy = { [weak self] data in self?.copy(data) }
         canvas.onSave = { [weak self] data in self?.save(data) }
     }
@@ -64,7 +84,15 @@ final class OverlayEditorController {
         panel.makeFirstResponder(canvas)
     }
 
+    func currentPNGData() -> Data? { selectionOnly ? nil : canvas.currentPNGData(originalData: originalPNGData) }
+
+    func finish() { close() }
+
     private func copy(_ pngData: Data) {
+        if let onCopy {
+            if onCopy(pngData) { canvas.showCopySuccess() }
+            return
+        }
         let pasteboard = NSPasteboard.general
         pasteboard.clearContents()
         let item = NSPasteboardItem()
@@ -80,6 +108,10 @@ final class OverlayEditorController {
     }
 
     private func save(_ pngData: Data) {
+        if let onSave {
+            if onSave(pngData) { canvas.showSaveSuccess() }
+            return
+        }
         let formatter = DateFormatter()
         formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
 
@@ -110,7 +142,14 @@ final class OverlayEditorController {
         guard !didClose else { return }
         didClose = true
         panel.orderOut(nil)
-        onClose()
+        onClose(currentPNGData())
+    }
+
+    private func capture(_ data: Data, selection: CGRect) {
+        guard !didClose else { return }
+        didClose = true
+        panel.orderOut(nil)
+        onCapture?(data, selection)
     }
 }
 
@@ -123,10 +162,15 @@ private enum CanvasInteraction {
     case moving(start: CGPoint, original: CGRect)
     case resizing(handle: ResizeHandle, original: CGRect)
     case drawing(tool: EditorTool, start: CGPoint)
+    case editingShape(index: Int, start: CGPoint, original: Annotation, handle: Int?)
+    case placingText(start: CGPoint, current: CGPoint)
+    case movingText(index: Int, start: CGPoint, original: Annotation)
+    case resizingText(index: Int, start: CGPoint, original: Annotation, left: Bool)
 }
 
-final class EditorCanvasView: NSView, NSTextFieldDelegate {
+final class EditorCanvasView: NSView, NSTextViewDelegate {
     var onCancel: (() -> Void)?
+    var onCapture: ((Data, CGRect) -> Void)?
     var onCopy: ((Data) -> Void)?
     var onSave: ((Data) -> Void)?
 
@@ -134,18 +178,25 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     private let pixelScale: CGFloat
     private let backgroundImage: NSImage?
     private let imageBounds: CGRect
-    private let history = AnnotationHistory()
+    private let history: AnnotationHistory
     private let toolbar = EditorToolbar()
+    private var toolbarOrigin: CGPoint?
     private var selection: CGRect?
     private var activeTool: EditorTool?
     private var selectedColor = NSColor.systemRed
     private var selectedWidth: CGFloat = 3
+    private var selectedFontSize: CGFloat = 18
     private var interaction: CanvasInteraction?
     private var currentStrokePoints: [CGPoint] = []
     private var previewAnnotation: Annotation?
     private var selectionLocked = false
-    private var textField: NSTextField?
-    private var textOrigin: CGPoint?
+    private let selectionOnly: Bool
+    private let originalPNGData: Data?
+    private var textView: AnnotationTextView?
+    private var textEditor: NSScrollView?
+    private var editingTextIndex: Int?
+    private var selectedTextIndex: Int?
+    private var selectedShapeIndex: Int?
 
     override var isFlipped: Bool { true }
     override var acceptsFirstResponder: Bool { true }
@@ -156,13 +207,19 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         backgroundImage: NSImage? = nil,
         imageBounds: CGRect? = nil,
         initialSelection: CGRect? = nil,
-        selectionLocked: Bool = false
+        selectionLocked: Bool = false,
+        selectionOnly: Bool = false,
+        canvasSize: CGSize? = nil,
+        originalPNGData: Data? = nil
     ) {
         self.image = image
         self.pixelScale = pixelScale
         self.backgroundImage = backgroundImage
         self.imageBounds = imageBounds ?? CGRect(origin: .zero, size: image.size)
-        super.init(frame: CGRect(origin: .zero, size: backgroundImage?.size ?? image.size))
+        self.selectionOnly = selectionOnly
+        self.originalPNGData = originalPNGData
+        history = AnnotationHistory(crop: initialSelection)
+        super.init(frame: CGRect(origin: .zero, size: canvasSize ?? backgroundImage?.size ?? image.size))
         selection = initialSelection
         self.selectionLocked = selectionLocked
         toolbar.frame.size = toolbar.preferredSize
@@ -178,7 +235,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         addCursorRect(bounds, cursor: selectionLocked && activeTool == nil ? .arrow : .crosshair)
         if activeTool == .text, let selection {
             addCursorRect(selection, cursor: .iBeam)
+            for case let .text(text, origin, _, width, fontSize) in history.annotations {
+                addCursorRect(EditorRenderer.textBounds(text, at: origin, width: width, fontSize: fontSize).insetBy(dx: -4, dy: -4).intersection(selection), cursor: .openHand)
+            }
+            if textEditor == nil, let box = selectedTextBox() {
+                for left in [true, false] {
+                    addCursorRect(textResizeHandle(box, left: left).intersection(selection), cursor: .resizeLeftRight)
+                }
+            }
             return
+        }
+        if let selection, let tool = activeTool, [.rectangle, .line, .arrow].contains(tool) {
+            if let annotation = selectedShape() {
+                for point in ShapeGeometry.handles(for: annotation) {
+                    addCursorRect(shapeHandle(at: point).intersection(selection), cursor: .crosshair)
+                }
+            }
         }
         guard !selectionLocked, activeTool == nil, let selection else { return }
         addCursorRect(selection, cursor: .openHand)
@@ -216,8 +288,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 
             context.saveGState()
             context.clip(to: selection)
-            EditorRenderer.drawAnnotations(history.annotations, in: context)
-            if let previewAnnotation {
+            var annotations = history.annotations
+            if let editingTextIndex { annotations.remove(at: editingTextIndex) }
+            switch interaction {
+            case let .movingText(index, _, _), let .resizingText(index, _, _, _), let .editingShape(index, _, _, _):
+                if let previewAnnotation { annotations[index] = previewAnnotation }
+            default: break
+            }
+            EditorRenderer.drawAnnotations(annotations, in: context)
+            if let previewAnnotation, case .drawing = interaction {
                 EditorRenderer.drawAnnotations([previewAnnotation], in: context)
             }
             if case let .drawing(tool, start) = interaction,
@@ -225,6 +304,22 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
                let end = currentStrokePoints.last,
                let stroke = makeAnnotation(tool: tool, start: start, end: end, points: currentStrokePoints) {
                 EditorRenderer.drawAnnotations([stroke], in: context)
+            }
+            if let annotation = selectedShape() {
+                context.setFillColor(NSColor.controlAccentColor.cgColor)
+                for point in ShapeGeometry.handles(for: annotation) { context.fill(shapeHandle(at: point)) }
+            }
+            if activeTool == .text, textEditor == nil, let box = selectedTextBox() {
+                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+                context.setLineWidth(1)
+                context.stroke(box)
+                context.setFillColor(NSColor.controlAccentColor.cgColor)
+                for left in [true, false] { context.fill(textResizeHandle(box, left: left)) }
+            }
+            if case let .placingText(start, current) = interaction {
+                context.setStrokeColor(NSColor.controlAccentColor.cgColor)
+                context.setLineWidth(1)
+                context.stroke(SelectionGeometry.normalized(from: start, to: current))
             }
             context.restoreGState()
 
@@ -275,8 +370,51 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         guard selection.contains(point), let activeTool else { return }
         let clamped = SelectionGeometry.clamped(point, to: selection)
         if activeTool == .text {
-            beginText(at: clamped)
+            if let index = selectedTextIndex, let box = selectedTextBox(),
+               let left = [true, false].first(where: { textResizeHandle(box, left: $0).contains(point) }) {
+                interaction = .resizingText(index: index, start: point, original: history.annotations[index], left: left)
+                return
+            }
+            if let index = history.annotations.indices.reversed().first(where: { index in
+                guard case let .text(text, origin, _, width, fontSize) = history.annotations[index] else { return false }
+                return EditorRenderer.textBounds(text, at: origin, width: width, fontSize: fontSize).insetBy(dx: -4, dy: -4).contains(point)
+            }) {
+                selectedTextIndex = index
+                updateSelectedStyle()
+                invalidate(selection)
+                window?.invalidateCursorRects(for: self)
+                if event.clickCount >= 2 {
+                    beginText(at: point, editing: index)
+                } else {
+                    interaction = .movingText(index: index, start: point, original: history.annotations[index])
+                    NSCursor.closedHand.set()
+                }
+            } else {
+                selectedTextIndex = nil
+                invalidate(selection)
+                interaction = .placingText(start: clamped, current: clamped)
+            }
         } else {
+            if [.rectangle, .line, .arrow].contains(activeTool) {
+                if let index = selectedShapeIndex, let annotation = selectedShape(),
+                   let handle = ShapeGeometry.handles(for: annotation).firstIndex(where: { shapeHandle(at: $0).contains(point) }) {
+                    interaction = .editingShape(index: index, start: point, original: history.annotations[index], handle: handle)
+                    return
+                }
+                selectedShapeIndex = history.annotations.indices.reversed().first {
+                    ShapeGeometry.tool(for: history.annotations[$0]) == activeTool
+                        && ShapeGeometry.contains(point, in: history.annotations[$0])
+                }
+                selectedTextIndex = nil
+                updateSelectedStyle()
+                invalidate(selection)
+                window?.invalidateCursorRects(for: self)
+                if let index = selectedShapeIndex {
+                    interaction = .editingShape(index: index, start: point, original: history.annotations[index], handle: nil)
+                    NSCursor.closedHand.set()
+                    return
+                }
+            }
             currentStrokePoints = [clamped]
             interaction = .drawing(tool: activeTool, start: clamped)
         }
@@ -289,6 +427,51 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let oldPreview = previewAnnotation
 
         switch interaction {
+        case let .editingShape(_, start, original, handle):
+            guard let selection else { return }
+            if let handle {
+                let anchor = ShapeGeometry.handles(for: original)[handle]
+                previewAnnotation = ShapeGeometry.resized(original, handle: handle,
+                    to: CGPoint(x: anchor.x + point.x - start.x, y: anchor.y + point.y - start.y), within: selection)
+            } else {
+                previewAnnotation = ShapeGeometry.moved(original,
+                    by: CGPoint(x: point.x - start.x, y: point.y - start.y), within: selection)
+            }
+            invalidate(selection)
+            return
+        case let .resizingText(_, start, original, left):
+            guard let selection, case let .text(text, origin, color, width, fontSize) = original else { return }
+            let right = min(origin.x + width, selection.maxX)
+            let delta = point.x - start.x
+            let minimumWidth = min(24, right - selection.minX)
+            let x = left ? min(max(origin.x + delta, selection.minX), right - minimumWidth) : origin.x
+            let newWidth = left ? right - x : min(max(width + delta, min(24, selection.maxX - x)), selection.maxX - x)
+            previewAnnotation = .text(text, CGPoint(x: x, y: origin.y), color, width: newWidth, fontSize: fontSize)
+            invalidate(selection)
+            return
+        case let .placingText(start, current):
+            guard let selection else { return }
+            let next = SelectionGeometry.clamped(point, to: selection)
+            self.interaction = .placingText(start: start, current: next)
+            invalidate(SelectionGeometry.normalized(from: start, to: current)
+                .union(SelectionGeometry.normalized(from: start, to: next)).insetBy(dx: -2, dy: -2))
+            return
+        case let .movingText(_, start, original):
+            guard let selection, case let .text(text, origin, color, width, fontSize) = original else { return }
+            let textBounds = EditorRenderer.textBounds(text, at: origin, width: width, fontSize: fontSize)
+            let movableBounds = CGRect(origin: origin, size: CGSize(
+                width: min(textBounds.width, selection.width),
+                height: min(textBounds.height, selection.height)
+            ))
+            let moved = SelectionGeometry.moved(movableBounds,
+                by: CGPoint(x: point.x - start.x, y: point.y - start.y), within: selection)
+            let oldBox = selectedTextBox()
+            previewAnnotation = .text(text, moved.origin, color, width: width, fontSize: fontSize)
+            invalidateAnnotations(oldPreview ?? original, previewAnnotation)
+            if let oldBox, let newBox = selectedTextBox() {
+                invalidate(oldBox.union(newBox).insetBy(dx: -6, dy: -6))
+            }
+            return
         case let .selecting(start):
             selection = SelectionGeometry.normalized(from: start, to: SelectionGeometry.clamped(point, to: bounds))
         case let .moving(start, original):
@@ -336,25 +519,50 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let point = convert(event.locationInWindow, from: nil)
 
         switch interaction {
+        case let .placingText(start, _):
+            guard let selection else { return }
+            let rect = SelectionGeometry.normalized(from: start, to: SelectionGeometry.clamped(point, to: selection))
+            beginText(at: start, box: rect.width >= 24 && rect.height >= 24 ? rect : nil)
         case .selecting:
             guard let selection,
                   selection.width >= SelectionGeometry.minimumSize,
                   selection.height >= SelectionGeometry.minimumSize
             else {
-                if let selection { invalidate(selection.insetBy(dx: -8, dy: -8)) }
-                self.selection = nil
-                toolbar.isHidden = true
+                invalidateSelection(from: self.selection, to: history.crop)
+                self.selection = history.crop
+                toolbar.isHidden = self.selection == nil
                 return
             }
-            showToolbar()
+            if selectionOnly {
+                if let data = pngData() { onCapture?(data, selection) }
+            } else {
+                history.setCrop(selection)
+                updateHistoryButtons()
+                showToolbar()
+            }
+        case let .editingShape(index, _, original, _):
+            guard let previewAnnotation,
+                  ShapeGeometry.handles(for: original) != ShapeGeometry.handles(for: previewAnnotation) else { return }
+            history.replace(at: index, with: previewAnnotation)
+            updateHistoryButtons()
+        case let .movingText(index, _, original), let .resizingText(index, _, original, _):
+            guard let previewAnnotation,
+                  case let .text(_, oldOrigin, _, oldWidth, _) = original,
+                  case let .text(_, newOrigin, _, newWidth, _) = previewAnnotation,
+                  oldOrigin != newOrigin || oldWidth != newWidth else { return }
+            history.replace(at: index, with: previewAnnotation)
+            updateHistoryButtons()
         case .moving, .resizing:
-            break
+            if !selectionOnly {
+                history.setCrop(selection)
+                updateHistoryButtons()
+            }
         case let .drawing(tool, start):
             guard let selection else { return }
             let end = SelectionGeometry.clamped(point, to: selection)
             if let annotation = makeAnnotation(tool: tool, start: start, end: end, points: currentStrokePoints) {
                 history.append(annotation)
-                selectionLocked = true
+                if ShapeGeometry.tool(for: annotation) != nil { selectedShapeIndex = history.annotations.count - 1 }
                 updateHistoryButtons()
             }
         }
@@ -363,6 +571,15 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     override func keyDown(with event: NSEvent) {
         if event.keyCode == 53 {
             onCancel?()
+        } else if (event.keyCode == 51 || event.keyCode == 117), textView == nil {
+            let index = activeTool == .text ? selectedTextIndex : selectedShapeIndex
+            guard interaction == nil, let index, history.annotations.indices.contains(index),
+                  (activeTool == .text && selectedTextIndex == index) || selectedShape() != nil else { return }
+            selectedTextIndex = nil
+            selectedShapeIndex = nil
+            history.remove(at: index)
+            updateHistoryButtons()
+            if let selection { invalidate(selection) }
         } else {
             super.keyDown(with: event)
         }
@@ -382,31 +599,29 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         }
     }
 
-    func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-        if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-            commitText()
-            return true
-        }
-        if commandSelector == #selector(NSResponder.cancelOperation(_:)) {
-            cancelText()
-            return true
-        }
-        return false
-    }
-
-    func controlTextDidEndEditing(_ notification: Notification) {
-        if textField != nil { commitText() }
+    func textDidEndEditing(_ notification: Notification) {
+        guard let view = notification.object as? NSTextView, view === textView else { return }
+        commitText()
     }
 
     private func configureToolbar() {
         toolbar.isHidden = true
+        toolbar.setCropEnabled(!selectionLocked)
+        if !selectionLocked { toolbar.activeTool = .crop }
+        toolbar.onMove = { [weak self] origin in
+            self?.toolbarOrigin = origin
+            self?.positionToolbar()
+        }
         toolbar.onTool = { [weak self] tool in
-            self?.activeTool = tool
+            self?.commitText()
+            self?.activeTool = tool == .crop ? nil : tool
             self?.toolbar.activeTool = tool
+            self?.updateSelectedStyle()
             if let self { self.window?.invalidateCursorRects(for: self) }
         }
-        toolbar.onColor = { [weak self] color in self?.selectedColor = color }
-        toolbar.onWidth = { [weak self] width in self?.selectedWidth = width }
+        toolbar.onColor = { [weak self] color in self?.setAnnotationColor(color) }
+        toolbar.onWidth = { [weak self] width in self?.setAnnotationWidth(width) }
+        toolbar.onFontSize = { [weak self] size in self?.setTextFontSize(size) }
         toolbar.onUndo = { [weak self] in self?.undo() }
         toolbar.onRedo = { [weak self] in self?.redo() }
         toolbar.onCopy = { [weak self] in self?.copyImage() }
@@ -428,66 +643,240 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             return hypot(end.x - start.x, end.y - start.y) > 1 ? .arrow(start, end, style) : nil
         case .highlighter:
             return .highlighter(points.isEmpty ? [start, end] : points, style)
-        case .text:
+        case .text, .crop:
             return nil
         }
     }
 
-    private func beginText(at point: CGPoint) {
-        cancelText()
-        guard let selection else { return }
-        let width = min(240, selection.width)
-        let height = min(26, selection.height)
-        let origin = CGPoint(x: min(point.x, selection.maxX - width), y: min(point.y, selection.maxY - height))
-        let field = NSTextField(frame: CGRect(origin: origin, size: CGSize(width: width, height: height)))
-        field.delegate = self
-        field.font = .systemFont(ofSize: 18, weight: .medium)
-        field.textColor = selectedColor
-        field.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.9)
-        field.isBezeled = true
-        field.focusRingType = .none
-        addSubview(field)
-        textField = field
-        textOrigin = origin
-        window?.makeFirstResponder(field)
+    private func updateSelectedStyle() {
+        if let index = selectedTextIndex, history.annotations.indices.contains(index),
+           case let .text(_, _, color, _, fontSize) = history.annotations[index] {
+            selectedFontSize = fontSize
+            if activeTool == .text { selectedColor = color }
+        }
+        if let annotation = selectedShape(), let style = ShapeGeometry.style(for: annotation) {
+            selectedColor = style.color
+            selectedWidth = style.width
+        }
+        toolbar.textFontSize = selectedFontSize
+        toolbar.annotationColor = selectedColor
+        toolbar.strokeWidth = selectedWidth
     }
 
-    private func commitText() {
-        guard let field = textField, let origin = textOrigin else { return }
-        let text = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        field.removeFromSuperview()
-        textField = nil
-        textOrigin = nil
-        if !text.isEmpty {
-            history.append(.text(text, origin, selectedColor))
-            selectionLocked = true
-            updateHistoryButtons()
-        }
-        window?.makeFirstResponder(self)
+    private func setAnnotationWidth(_ width: CGFloat) {
+        guard [CGFloat(1), 3, 6].contains(width) else { return }
+        selectedWidth = width
+        toolbar.strokeWidth = width
+        guard let annotation = selectedShape(), var style = ShapeGeometry.style(for: annotation) else { return }
+        style.width = width
+        setShapeStyle(style)
+    }
+
+    private func setShapeStyle(_ style: AnnotationStyle) {
+        guard let index = selectedShapeIndex, let annotation = selectedShape(),
+              let oldStyle = ShapeGeometry.style(for: annotation),
+              oldStyle.width != style.width || !oldStyle.color.isEqual(style.color),
+              let updated = ShapeGeometry.styled(annotation, with: style) else { return }
+        history.replace(at: index, with: updated)
+        updateHistoryButtons()
         if let selection { invalidate(selection) }
     }
 
-    private func cancelText() {
-        textField?.removeFromSuperview()
-        textField = nil
-        textOrigin = nil
+    private func setAnnotationColor(_ color: NSColor) {
+        selectedColor = color
+        toolbar.annotationColor = color
+        if let annotation = selectedShape(), var style = ShapeGeometry.style(for: annotation) {
+            style.color = color
+            setShapeStyle(style)
+            return
+        }
+        guard activeTool == .text else { return }
+        if let view = textView {
+            view.textColor = color
+            view.typingAttributes[.foregroundColor] = color
+            return
+        }
+        guard let index = selectedTextIndex, history.annotations.indices.contains(index),
+              case let .text(text, origin, oldColor, width, fontSize) = history.annotations[index],
+              !oldColor.isEqual(color) else { return }
+        history.replace(at: index, with: .text(text, origin, color, width: width, fontSize: fontSize))
+        updateHistoryButtons()
+        if let selection { invalidate(selection) }
+    }
+
+    private func setTextFontSize(_ size: CGFloat) {
+        guard size.isFinite, (8...144).contains(size) else { return }
+        selectedFontSize = size
+        toolbar.textFontSize = size
+        if let view = textView {
+            view.font = EditorRenderer.font(size: size)
+            view.typingAttributes[.font] = EditorRenderer.font(size: size)
+            return
+        }
+        guard let index = selectedTextIndex, history.annotations.indices.contains(index),
+              case let .text(text, origin, color, width, oldSize) = history.annotations[index],
+              oldSize != size else { return }
+        history.replace(at: index, with: .text(text, origin, color, width: width, fontSize: size))
+        updateHistoryButtons()
+        if let selection { invalidate(selection) }
+    }
+
+    private func selectedShape() -> Annotation? {
+        guard let index = selectedShapeIndex, history.annotations.indices.contains(index),
+              let tool = activeTool, ShapeGeometry.tool(for: history.annotations[index]) == tool else { return nil }
+        if case .editingShape = interaction { return previewAnnotation ?? history.annotations[index] }
+        return history.annotations[index]
+    }
+
+    private func shapeHandle(at point: CGPoint) -> CGRect {
+        CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
+    }
+
+    private func selectedTextBox() -> CGRect? {
+        guard let index = selectedTextIndex, history.annotations.indices.contains(index), let selection else { return nil }
+        let annotation = previewAnnotation ?? history.annotations[index]
+        guard case let .text(text, origin, _, width, fontSize) = annotation else { return nil }
+        let height = max(24, EditorRenderer.textBounds(text, at: origin, width: width, fontSize: fontSize).height)
+        return CGRect(origin: origin, size: CGSize(width: min(width, selection.maxX - origin.x), height: height)).intersection(selection)
+    }
+
+    private func textResizeHandle(_ box: CGRect, left: Bool) -> CGRect {
+        CGRect(x: (left ? box.minX : box.maxX) - 4, y: box.midY - 4, width: 8, height: 8)
+    }
+
+    private func beginText(at point: CGPoint, box: CGRect? = nil, editing index: Int? = nil) {
+        commitText()
+        guard let selection else { return }
+        var text = ""
+        var color = selectedColor
+        var rect = box ?? CGRect(origin: point, size: CGSize(width: min(300, selection.width), height: min(120, selection.height)))
+        if let index, case let .text(value, origin, originalColor, width, fontSize) = history.annotations[index] {
+            text = value
+            color = originalColor
+            selectedFontSize = fontSize
+            toolbar.textFontSize = fontSize
+            let size = EditorRenderer.textBounds(value, at: origin, width: width, fontSize: fontSize).size
+            rect = CGRect(x: origin.x - 4, y: origin.y - 4,
+                          width: min(width + 8, selection.width), height: max(120, size.height + 8))
+        }
+        rect.size.width = min(rect.width, selection.width)
+        rect.size.height = min(rect.height, selection.height)
+        rect = SelectionGeometry.moved(rect, by: .zero, within: selection)
+        let editor = NSScrollView(frame: rect)
+        editor.hasVerticalScroller = true
+        editor.scrollerStyle = .overlay
+        editor.wantsLayer = true
+        editor.layer?.borderWidth = 1
+        editor.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        let view = AnnotationTextView(frame: CGRect(origin: .zero, size: editor.contentSize))
+        view.delegate = self
+        view.font = EditorRenderer.font(size: selectedFontSize)
+        view.textColor = color
+        view.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.95)
+        view.isRichText = false
+        view.isHorizontallyResizable = false
+        view.isVerticallyResizable = true
+        view.minSize = CGSize(width: 0, height: editor.contentSize.height)
+        view.maxSize = CGSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        view.autoresizingMask = [.width]
+        view.textContainerInset = CGSize(width: 4, height: 4)
+        view.textContainer?.lineFragmentPadding = 0
+        view.textContainer?.widthTracksTextView = true
+        view.textContainer?.containerSize = CGSize(width: max(1, rect.width - 8), height: .greatestFiniteMagnitude)
+        view.string = text
+        view.typingAttributes = [.font: EditorRenderer.font(size: selectedFontSize), .foregroundColor: color]
+        view.toolTip = "Enter: new line · ⌘Enter: finish · Esc: cancel"
+        view.setAccessibilityLabel("Screenshot text")
+        view.onCommit = { [weak self] in self?.commitText() }
+        view.onCancel = { [weak self] in self?.cancelText() }
+        editor.documentView = view
+        textEditor = editor
+        textView = view
+        editingTextIndex = index
+        addSubview(editor)
+        window?.makeFirstResponder(view)
+        if let selection = self.selection { invalidate(selection) }
+    }
+
+    private func commitText() {
+        guard let view = textView, let editor = textEditor else { return }
+        let text = view.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        let index = editingTextIndex
+        let origin = CGPoint(x: editor.frame.minX + 4, y: editor.frame.minY + 4)
+        let width = max(1, editor.contentSize.width - 8)
+        let color = view.textColor ?? selectedColor
+        let fontSize = view.font?.pointSize ?? selectedFontSize
+        // Clear editing state before focus/removal can send another end-edit notification.
+        textView = nil
+        textEditor = nil
+        editingTextIndex = nil
         window?.makeFirstResponder(self)
+        editor.removeFromSuperview()
+        if !text.isEmpty {
+            let annotation = Annotation.text(text, origin, color, width: width, fontSize: fontSize)
+            if let index { history.replace(at: index, with: annotation) }
+            else { history.append(annotation) }
+            selectedTextIndex = index ?? history.annotations.count - 1
+            updateHistoryButtons()
+        }
+        if let selection { invalidate(selection) }
+        window?.invalidateCursorRects(for: self)
+    }
+
+    private func cancelText() {
+        let editor = textEditor
+        textView = nil
+        textEditor = nil
+        editingTextIndex = nil
+        window?.makeFirstResponder(self)
+        editor?.removeFromSuperview()
+        updateSelectedStyle()
+        if let selection { invalidate(selection) }
     }
 
     private func undo() {
-        history.undo()
+        commitText()
+        selectedTextIndex = history.undo()
+        selectedShapeIndex = selectedTextIndex
+        restoreHistoryCrop()
         updateHistoryButtons()
         if let selection { invalidate(selection) }
     }
 
     private func redo() {
-        history.redo()
+        commitText()
+        selectedTextIndex = history.redo()
+        selectedShapeIndex = selectedTextIndex
+        restoreHistoryCrop()
         updateHistoryButtons()
         if let selection { invalidate(selection) }
     }
 
+    private func restoreHistoryCrop() {
+        let previous = selection
+        selection = history.crop
+        toolbar.isHidden = selection == nil
+        positionToolbar()
+        invalidateSelection(from: previous, to: selection)
+    }
+
     private func updateHistoryButtons() {
+        if let index = selectedShapeIndex,
+           !history.annotations.indices.contains(index) || ShapeGeometry.tool(for: history.annotations[index]) == nil {
+            selectedShapeIndex = nil
+        }
+        if let index = selectedTextIndex {
+            if !history.annotations.indices.contains(index) { selectedTextIndex = nil }
+            else {
+                switch history.annotations[index] {
+                case .text: break
+                default: selectedTextIndex = nil
+                }
+            }
+        }
+        updateSelectedStyle()
         toolbar.updateHistory(canUndo: history.canUndo, canRedo: history.canRedo)
+        window?.invalidateCursorRects(for: self)
     }
 
     func showCopySuccess() {
@@ -499,12 +888,12 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
     }
 
     private func copyImage() {
-        guard let data = pngData() else { return }
+        guard let data = currentPNGData(originalData: originalPNGData) else { return }
         onCopy?(data)
     }
 
     private func saveImage() {
-        guard let data = pngData() else { return }
+        guard let data = currentPNGData(originalData: originalPNGData) else { return }
         onSave?(data)
     }
 
@@ -522,6 +911,12 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             annotations: history.annotations,
             scale: pixelScale
         )
+    }
+
+    func currentPNGData(originalData: Data? = nil) -> Data? {
+        commitText()
+        if selectionLocked, history.annotations.isEmpty, let originalData { return originalData }
+        return pngData()
     }
 
     private func drawHandles(for selection: CGRect, in context: CGContext) {
@@ -587,6 +982,10 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
             x = selection.midX - size.width / 2
             y = bounds.maxY - size.height - 8
         }
+        if let toolbarOrigin {
+            x = toolbarOrigin.x
+            y = toolbarOrigin.y
+        }
         let maxX = max(bounds.minX + 8, bounds.maxX - size.width - 8)
         let maxY = max(bounds.minY + 8, bounds.maxY - size.height - 8)
         x = min(max(x, bounds.minX + 8), maxX)
@@ -594,6 +993,7 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         let frame = CGRect(origin: CGPoint(x: x, y: y), size: size)
         guard toolbar.frame != frame else { return }
         toolbar.frame = frame
+        if toolbarOrigin != nil { toolbarOrigin = frame.origin }
         toolbar.updateShadowPath()
     }
 
@@ -641,8 +1041,8 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
         case let .arrow(start, end, style):
             rect = pointsBounds([start, end])
             padding = max(14, style.width * 5)
-        case let .text(text, point, _):
-            rect = CGRect(x: point.x, y: point.y, width: CGFloat(text.count) * 11, height: 24)
+        case let .text(text, point, _, width, fontSize):
+            rect = EditorRenderer.textBounds(text, at: point, width: width, fontSize: fontSize)
             padding = 2
         }
         return rect.insetBy(dx: -padding, dy: -padding)
@@ -672,16 +1072,21 @@ final class EditorCanvasView: NSView, NSTextFieldDelegate {
 }
 
 final class EditorToolbar: NSVisualEffectView {
+    var onMove: ((CGPoint) -> Void)?
+    private var dragOffset: CGPoint?
     var onTool: ((EditorTool) -> Void)?
     var onColor: ((NSColor) -> Void)?
     var onWidth: ((CGFloat) -> Void)?
+    var onFontSize: ((CGFloat) -> Void)?
     var onUndo: (() -> Void)?
     var onRedo: (() -> Void)?
     var onCopy: (() -> Void)?
     var onSave: (() -> Void)?
     var onClose: (() -> Void)?
 
-    var activeTool: EditorTool? { didSet { updateToolButtons() } }
+    var activeTool: EditorTool? { didSet { updateToolButtons(); updateSizeButton() } }
+    var textFontSize: CGFloat = 18 { didSet { updateSizeButton() } }
+    var annotationColor: NSColor = .systemRed { didSet { colorButton.color = annotationColor } }
     private let stack = NSStackView()
     private var toolButtons: [EditorTool: ToolbarIconButton] = [:]
     private let undoButton = ToolbarIconButton()
@@ -691,7 +1096,7 @@ final class EditorToolbar: NSVisualEffectView {
     private let widthButton = ToolbarActionButton(title: "3 px", symbol: "lineweight", prominent: false, width: 64)
     private let copyButton = ToolbarActionButton(title: "Copy", symbol: "doc.on.doc", prominent: false, width: 70)
     private let saveButton = ToolbarActionButton(title: "Save", symbol: "square.and.arrow.down", prominent: true, width: 70)
-    private var selectedWidthIndex = 1
+    var strokeWidth: CGFloat = 3 { didSet { updateSizeButton() } }
     private var colorPopover: NSPopover?
     private var feedbackTask: Task<Void, Never>?
 
@@ -726,6 +1131,13 @@ final class EditorToolbar: NSVisualEffectView {
             stack.topAnchor.constraint(equalTo: topAnchor, constant: 8),
             stack.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8)
         ])
+
+        let grip = NSImageView()
+        grip.image = NSImage(systemSymbolName: "line.3.horizontal", accessibilityDescription: "Move toolbar")
+        grip.contentTintColor = .secondaryLabelColor
+        grip.toolTip = "Drag to move toolbar"
+        grip.widthAnchor.constraint(equalToConstant: 18).isActive = true
+        stack.addArrangedSubview(grip)
 
         for tool in EditorTool.allCases {
             let button = iconButton(symbol: tool.symbolName, label: tool.title, action: #selector(selectTool(_:)))
@@ -769,8 +1181,38 @@ final class EditorToolbar: NSVisualEffectView {
 
     required init?(coder: NSCoder) { nil }
 
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let hit = super.hitTest(point) else { return nil }
+        var view: NSView? = hit
+        while let current = view, current !== self {
+            if current is NSControl, !(current is NSImageView) { return hit }
+            view = current.superview
+        }
+        return self
+    }
+
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .arrow)
+        addCursorRect(bounds, cursor: .openHand)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let superview else { return }
+        let point = superview.convert(event.locationInWindow, from: nil)
+        dragOffset = CGPoint(x: point.x - frame.minX, y: point.y - frame.minY)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let superview, let dragOffset else { return }
+        let point = superview.convert(event.locationInWindow, from: nil)
+        onMove?(CGPoint(x: point.x - dragOffset.x, y: point.y - dragOffset.y))
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragOffset = nil
+    }
+
+    func setCropEnabled(_ enabled: Bool) {
+        toolButtons[.crop]?.isEnabled = enabled
     }
 
     func updateHistory(canUndo: Bool, canRedo: Bool) {
@@ -814,6 +1256,18 @@ final class EditorToolbar: NSVisualEffectView {
     }
 
     @objc private func showWidthMenu() {
+        if activeTool == .text {
+            let menu = NSMenu()
+            for size in [12, 14, 18, 24, 32, 48, 64, 96] {
+                let item = NSMenuItem(title: "\(size) pt", action: #selector(selectFontSize(_:)), keyEquivalent: "")
+                item.target = self
+                item.tag = size
+                item.state = CGFloat(size) == textFontSize ? .on : .off
+                menu.addItem(item)
+            }
+            menu.popUp(positioning: nil, at: CGPoint(x: 0, y: widthButton.bounds.maxY + 4), in: widthButton)
+            return
+        }
         let labels = ["Thin — 1 px", "Medium — 3 px", "Thick — 6 px"]
         let widths: [CGFloat] = [1, 3, 6]
         let menu = NSMenu()
@@ -821,21 +1275,31 @@ final class EditorToolbar: NSVisualEffectView {
             let item = NSMenuItem(title: labels[index], action: #selector(selectWidth(_:)), keyEquivalent: "")
             item.target = self
             item.tag = index
-            item.state = index == selectedWidthIndex ? .on : .off
+            item.state = widths[index] == strokeWidth ? .on : .off
             item.image = Self.strokeSample(width: widths[index])
             menu.addItem(item)
         }
-        menu.popUp(positioning: menu.item(at: selectedWidthIndex), at: CGPoint(x: 0, y: widthButton.bounds.maxY + 4), in: widthButton)
+        menu.popUp(positioning: menu.item(at: widths.firstIndex(of: strokeWidth) ?? 1), at: CGPoint(x: 0, y: widthButton.bounds.maxY + 4), in: widthButton)
     }
 
     @objc private func selectWidth(_ sender: NSMenuItem) {
         let widths: [CGFloat] = [1, 3, 6]
-        selectedWidthIndex = sender.tag
         let width = widths[sender.tag]
-        widthButton.title = "\(Int(width)) px"
-        widthButton.toolTip = "Line thickness: \(Int(width)) pixels"
-        widthButton.setAccessibilityValue("\(Int(width)) pixels")
+        strokeWidth = width
         onWidth?(width)
+    }
+
+    @objc private func selectFontSize(_ sender: NSMenuItem) {
+        onFontSize?(CGFloat(sender.tag))
+    }
+
+    private func updateSizeButton() {
+        let isText = activeTool == .text
+        let size = isText ? textFontSize : strokeWidth
+        widthButton.title = "\(Int(size)) \(isText ? "pt" : "px")"
+        widthButton.toolTip = isText ? "Font size: \(Int(size)) points" : "Line thickness: \(Int(size)) pixels"
+        widthButton.setAccessibilityLabel(isText ? "Font size" : "Line thickness")
+        widthButton.setAccessibilityValue("\(Int(size)) \(isText ? "points" : "pixels")")
     }
 
     @objc private func undo() { onUndo?() }
@@ -1220,5 +1684,20 @@ private extension NSColor {
         if isEqual(NSColor.black) { return "Black" }
         if isEqual(NSColor.white) { return "White" }
         return "Color"
+    }
+}
+
+private final class AnnotationTextView: NSTextView {
+    var onCommit: (() -> Void)?
+    var onCancel: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if (event.keyCode == 36 || event.keyCode == 76), event.modifierFlags.contains(.command) {
+            onCommit?()
+        } else if event.keyCode == 53 {
+            onCancel?()
+        } else {
+            super.keyDown(with: event)
+        }
     }
 }

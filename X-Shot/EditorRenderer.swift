@@ -1,6 +1,20 @@
 import AppKit
 
 enum EditorRenderer {
+    static let textFont = NSFont.systemFont(ofSize: 18, weight: .medium)
+
+    static func font(size: CGFloat) -> NSFont {
+        NSFont.systemFont(ofSize: size, weight: .medium)
+    }
+
+    static func textBounds(_ text: String, at point: CGPoint, width: CGFloat = .greatestFiniteMagnitude, fontSize: CGFloat = 18) -> CGRect {
+        let rect = NSAttributedString(string: text, attributes: [.font: font(size: fontSize)]).boundingRect(
+            with: CGSize(width: width, height: .greatestFiniteMagnitude),
+            options: [.usesLineFragmentOrigin, .usesFontLeading]
+        )
+        return CGRect(origin: point, size: CGSize(width: min(width, ceil(rect.width)), height: ceil(rect.height)))
+    }
+
     static func drawImage(
         _ image: NSImage,
         in rect: CGRect,
@@ -87,12 +101,15 @@ enum EditorRenderer {
             context.move(to: end)
             context.addLine(to: CGPoint(x: end.x - length * cos(angle + spread), y: end.y - length * sin(angle + spread)))
             context.strokePath()
-        case let .text(text, point, color):
+        case let .text(text, point, color, width, fontSize):
             let attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 18, weight: .medium),
+                .font: font(size: fontSize),
                 .foregroundColor: color
             ]
-            NSAttributedString(string: text, attributes: attributes).draw(at: point)
+            NSAttributedString(string: text, attributes: attributes).draw(
+                with: CGRect(origin: point, size: CGSize(width: width, height: textBounds(text, at: point, width: width, fontSize: fontSize).height)),
+                options: [.usesLineFragmentOrigin, .usesFontLeading]
+            )
         }
         context.restoreGState()
     }

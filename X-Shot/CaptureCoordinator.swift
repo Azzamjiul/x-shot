@@ -13,6 +13,8 @@ final class CaptureCoordinator {
     private var activeSession: UUID?
     private var editor: OverlayEditorController?
     private var windowPicker: WindowPickerController?
+    private var pending: PendingCapture?
+    private let saveFolderKey = "lastSaveFolder"
 
     func startCapture(_ mode: CaptureMode = .area) {
         guard activeSession == nil else {
@@ -20,6 +22,9 @@ final class CaptureCoordinator {
             windowPicker?.show()
             return
         }
+        editor?.finish()
+        guard savePendingCaptureBeforeQuit() else { return }
+        pending = nil
         guard ensureScreenCapturePermission() else { return }
 
         let session = UUID()
@@ -31,16 +36,10 @@ final class CaptureCoordinator {
                 guard activeSession == session else { return }
                 switch mode {
                 case .area:
-                    openEditor(session: session, snapshot: snapshot)
+                    openAreaSelector(session: session, snapshot: snapshot)
                 case .fullScreen:
-                    let bounds = CGRect(origin: .zero, size: snapshot.screen.frame.size)
-                    openEditor(
-                        session: session,
-                        snapshot: snapshot,
-                        imageBounds: bounds,
-                        initialSelection: bounds,
-                        selectionLocked: true
-                    )
+                    guard let data = pngData(snapshot.image) else { throw CaptureError.imageUnavailable }
+                    completeCapture(session: session, data: data, screen: snapshot.screen, editableImage: snapshot.image)
                 case .window:
                     try beginWindowSelection(session: session, snapshot: snapshot)
                 }
@@ -151,30 +150,9 @@ final class CaptureCoordinator {
                 let image = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: configuration)
                 guard activeSession == session else { return }
 
-                let canvasBounds = CGRect(origin: .zero, size: snapshot.screen.frame.size)
-                let localFrame = CaptureGeometry.localRect(
-                    for: window.frame,
-                    displayFrame: snapshot.displayFrame,
-                    canvasBounds: canvasBounds
-                )
-                let pointSize = CGSize(width: CGFloat(image.width) / scale, height: CGFloat(image.height) / scale)
-                let preferredFrame = CGRect(
-                    x: localFrame.midX - pointSize.width / 2,
-                    y: localFrame.midY - pointSize.height / 2,
-                    width: pointSize.width,
-                    height: pointSize.height
-                )
-                let imageBounds = CaptureGeometry.fitted(preferredFrame, within: canvasBounds)
-
-                openEditor(
-                    session: session,
-                    snapshot: snapshot,
-                    image: image,
-                    backgroundImage: snapshot.image,
-                    imageBounds: imageBounds,
-                    initialSelection: imageBounds,
-                    selectionLocked: true
-                )
+                guard let data = pngData(image) else { throw CaptureError.imageUnavailable }
+                completeCapture(session: session, data: data, screen: snapshot.screen,
+                                imageBounds: target.frame, backgroundImage: snapshot.image)
                 windowPicker?.close()
                 windowPicker = nil
             } catch {
@@ -183,28 +161,148 @@ final class CaptureCoordinator {
         }
     }
 
-    private func openEditor(
-        session: UUID,
-        snapshot: DisplaySnapshot,
-        image: CGImage? = nil,
-        backgroundImage: CGImage? = nil,
-        imageBounds: CGRect? = nil,
-        initialSelection: CGRect? = nil,
-        selectionLocked: Bool = false
-    ) {
+    private func openAreaSelector(session: UUID, snapshot: DisplaySnapshot) {
         guard activeSession == session else { return }
         let editor = OverlayEditorController(
             screen: snapshot.screen,
-            image: image ?? snapshot.image,
-            backgroundImage: backgroundImage,
-            imageBounds: imageBounds,
-            initialSelection: initialSelection,
-            selectionLocked: selectionLocked
-        ) { [weak self] in
+            image: snapshot.image,
+            selectionOnly: true,
+            onCapture: { [weak self] data, selection in
+                self?.completeCapture(session: session, data: data, screen: snapshot.screen,
+                                      imageBounds: selection, editableImage: snapshot.image)
+            }
+        ) { [weak self] _ in
             self?.endSession(session)
         }
         self.editor = editor
         editor.show()
+    }
+
+    private func completeCapture(session: UUID, data: Data, screen: NSScreen,
+                                 imageBounds: CGRect? = nil, backgroundImage: CGImage? = nil, editableImage: CGImage? = nil) {
+        guard activeSession == session else { return }
+        endSession(session)
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH.mm.ss"
+        let copied = copyToClipboard(data)
+        pending = PendingCapture(data: data, filename: "X-Shot \(formatter.string(from: Date())).png", screen: screen)
+        openCapturedEditor(imageBounds: imageBounds, backgroundImage: backgroundImage, editableImage: editableImage)
+        if !copied { showError("Could not copy the screenshot. Use Copy in the editor to retry.") }
+    }
+
+    private func pngData(_ image: CGImage) -> Data? {
+        NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
+    }
+
+    private func copyToClipboard(_ data: Data) -> Bool {
+        let item = NSPasteboardItem()
+        item.setData(data, forType: .png)
+        if let image = NSImage(data: data), let tiff = image.tiffRepresentation { item.setData(tiff, forType: .tiff) }
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        return pasteboard.writeObjects([item])
+    }
+
+    private func openCapturedEditor(imageBounds: CGRect? = nil, backgroundImage: CGImage? = nil, editableImage: CGImage? = nil) {
+        guard let pending, let image = NSImage(data: pending.data) else { return }
+        let screen = pending.screen
+        let maxSize = screen.frame.size
+        let scale = min(1, maxSize.width / image.size.width, maxSize.height / image.size.height)
+        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
+        let rect = imageBounds ?? CGRect(x: (maxSize.width - size.width) / 2,
+                          y: (maxSize.height - size.height) / 2,
+                          width: size.width, height: size.height)
+        guard let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            showError("Could not open the screenshot editor.")
+            return
+        }
+        let editor = OverlayEditorController(
+            screen: screen,
+            image: editableImage ?? cgImage,
+            backgroundImage: editableImage == nil ? backgroundImage : nil,
+            imageBounds: editableImage == nil ? rect : CGRect(origin: .zero, size: screen.frame.size),
+            initialSelection: rect,
+            selectionLocked: editableImage == nil,
+            originalPNGData: editableImage == nil ? pending.data : nil,
+            onCopy: { [weak self] data in
+                guard let self, self.copyToClipboard(data) else { return false }
+                self.updatePending(data)
+                return true
+            },
+            onSave: { [weak self] data in
+                guard let self else { return false }
+                self.updatePending(data)
+                return self.saveManually()
+            }
+        ) { [weak self] data in
+            guard let self else { return }
+            if let data { self.updatePending(data) }
+            self.editor = nil
+            if self.savePendingCaptureBeforeQuit() { self.pending = nil }
+        }
+        self.editor = editor
+        editor.show()
+    }
+
+    private func updatePending(_ data: Data) {
+        guard var pending else { return }
+        if pending.data != data {
+            pending.savedURL = nil
+        }
+        pending.data = data
+        self.pending = pending
+    }
+
+    @discardableResult
+    private func saveManually() -> Bool {
+        guard var pending else { return false }
+        NSApp.activate(ignoringOtherApps: true)
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = pending.filename
+        panel.directoryURL = saveFolder()
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
+        do {
+            try pending.data.write(to: url, options: .atomic)
+            pending.savedURL = url
+            self.pending = pending
+            UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: saveFolderKey)
+            return true
+        } catch {
+            showError("Could not save the screenshot: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func saveFolder() -> URL {
+        if let path = UserDefaults.standard.string(forKey: saveFolderKey) { return URL(fileURLWithPath: path, isDirectory: true) }
+        return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop", isDirectory: true)
+    }
+
+    @discardableResult
+    func savePendingCaptureBeforeQuit() -> Bool {
+        if let data = editor?.currentPNGData() { updatePending(data) }
+        guard var pending else { return true }
+        if pending.savedURL != nil { return true }
+        let folder = saveFolder()
+        var url = folder.appendingPathComponent(pending.filename)
+        var suffix = 2
+        while FileManager.default.fileExists(atPath: url.path) {
+            let base = (pending.filename as NSString).deletingPathExtension
+            url = folder.appendingPathComponent("\(base) \(suffix).png")
+            suffix += 1
+        }
+        do {
+            try pending.data.write(to: url, options: .atomic)
+            pending.savedURL = url
+            self.pending = pending
+            return true
+        } catch {
+            showError("Could not save the screenshot: \(error.localizedDescription)")
+            return false
+        }
     }
 
     private func orderedCaptureableWindows(_ windows: [SCWindow], on displayFrame: CGRect) -> [SCWindow] {
@@ -251,6 +349,7 @@ final class CaptureCoordinator {
     private func endSession(_ session: UUID) {
         guard activeSession == session else { return }
         editor = nil
+        windowPicker?.close()
         windowPicker = nil
         activeSession = nil
     }
@@ -269,6 +368,13 @@ private struct DisplaySnapshot {
     let displayFrame: CGRect
     let image: CGImage
     let windows: [SCWindow]
+}
+
+private struct PendingCapture {
+    var data: Data
+    let filename: String
+    let screen: NSScreen
+    var savedURL: URL?
 }
 
 private struct WindowTarget {
@@ -304,6 +410,7 @@ private final class WindowPickerController {
         panel.backgroundColor = .black
         panel.isOpaque = true
         panel.hasShadow = false
+        panel.hidesOnDeactivate = false
         panel.acceptsMouseMovedEvents = true
         panel.collectionBehavior = [.moveToActiveSpace, .fullScreenAuxiliary]
 
@@ -492,6 +599,7 @@ enum CaptureError: LocalizedError {
     case displayUnavailable
     case noWindows
     case windowUnavailable
+    case imageUnavailable
 
     var errorDescription: String? {
         switch self {
@@ -501,6 +609,8 @@ enum CaptureError: LocalizedError {
             "No capturable windows are visible on this display."
         case .windowUnavailable:
             "The selected window is no longer available."
+        case .imageUnavailable:
+            "Could not create a PNG from the captured image."
         }
     }
 }
