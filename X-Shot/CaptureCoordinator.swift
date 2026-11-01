@@ -170,7 +170,7 @@ final class CaptureCoordinator {
                 self?.completeCapture(session: session, data: data, screen: snapshot.screen,
                                       imageBounds: selection, editableImage: snapshot.image)
             }
-        ) { [weak self] _ in
+        ) { [weak self] in
             self?.endSession(session)
         }
         self.editor = editor
@@ -232,7 +232,7 @@ final class CaptureCoordinator {
                 self.updatePending(data)
                 return self.saveManually()
             }
-        ) { [weak self] _ in
+        ) { [weak self] in
             self?.editor = nil
             self?.pending = nil
         }

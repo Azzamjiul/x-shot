@@ -15,7 +15,7 @@ final class OverlayEditorController {
     private let onCapture: ((Data, CGRect) -> Void)?
     private let onCopy: ((Data) -> Bool)?
     private let onSave: ((Data) -> Bool)?
-    private let onClose: (Data?) -> Void
+    private let onClose: () -> Void
     private let originalPNGData: Data?
     private var didClose = false
 
@@ -31,7 +31,7 @@ final class OverlayEditorController {
         onCapture: ((Data, CGRect) -> Void)? = nil,
         onCopy: ((Data) -> Bool)? = nil,
         onSave: ((Data) -> Bool)? = nil,
-        onClose: @escaping (Data?) -> Void
+        onClose: @escaping () -> Void
     ) {
         self.selectionOnly = selectionOnly
         self.originalPNGData = originalPNGData
@@ -142,7 +142,7 @@ final class OverlayEditorController {
         guard !didClose else { return }
         didClose = true
         panel.orderOut(nil)
-        onClose(currentPNGData())
+        onClose()
     }
 
     private func capture(_ data: Data, selection: CGRect) {

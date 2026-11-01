@@ -1031,7 +1031,6 @@ final class XShotTests: XCTestCase {
         ))
         var shouldSucceed = false
         var exports: [Data] = []
-        var closedData: Data?
         var didClose = false
         let controller = OverlayEditorController(
             screen: screen, image: try XCTUnwrap(bitmap.cgImage),
@@ -1040,7 +1039,7 @@ final class XShotTests: XCTestCase {
             selectionLocked: true,
             onCopy: { data in exports.append(data); return shouldSucceed },
             onSave: { data in exports.append(data); return shouldSucceed }
-        ) { data in didClose = true; closedData = data }
+        ) { didClose = true }
         controller.show()
         defer { controller.finish() }
         let panel = try XCTUnwrap(NSApp.windows.first { $0 is OverlayPanel && $0.isVisible })
@@ -1081,7 +1080,6 @@ final class XShotTests: XCTestCase {
         XCTAssertEqual(exports.last, edited)
         controller.finish()
         XCTAssertTrue(didClose)
-        XCTAssertEqual(closedData, edited)
     }
 
     func testAreaCapturePassesOriginalSelectionToEditor() throws {
