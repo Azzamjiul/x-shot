@@ -220,7 +220,9 @@ final class XShotTests: XCTestCase {
         canvas.mouseUp(with: try event(.leftMouseUp, CGPoint(x: 100, y: 100)))
         let editor = try XCTUnwrap(canvas.subviews.compactMap { $0 as? NSScrollView }.first)
         let text = "Resize this text box to wrap these words onto more lines 👋"
-        try XCTUnwrap(editor.documentView as? NSTextView).string = text
+        let typed = try XCTUnwrap(editor.documentView as? NSTextView)
+        typed.string = text
+        typed.didChangeText()
         let width = editor.contentSize.width - 8
         let origin = CGPoint(x: 104, y: 104)
         let original = try XCTUnwrap(canvas.currentPNGData())
@@ -293,7 +295,9 @@ final class XShotTests: XCTestCase {
         canvas.mouseUp(with: try event(.leftMouseUp, CGPoint(x: 100, y: 100)))
         let editor = try XCTUnwrap(canvas.subviews.compactMap { $0 as? NSScrollView }.first)
         let text = "Font size keeps this text and wraps it"
-        try XCTUnwrap(editor.documentView as? NSTextView).string = text
+        let typed = try XCTUnwrap(editor.documentView as? NSTextView)
+        typed.string = text
+        typed.didChangeText()
         let width = editor.contentSize.width - 8
         let original = try XCTUnwrap(canvas.currentPNGData())
         toolbar.onFontSize?(32)

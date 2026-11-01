@@ -194,6 +194,8 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
     private var textView: AnnotationTextView?
     private var textEditor: NSScrollView?
     private var editingTextIndex: Int?
+    /// Click-placed text grows with its content; a dragged box keeps its width.
+    private var textAutoWidth = false
     private var selectedTextIndex: Int?
     private var selectedShapeIndex: Int?
     private let overlay = AnnotationOverlayView()
@@ -397,6 +399,11 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
             return
         }
 
+        // Clicking away while typing only finishes the text instead of opening another box.
+        if let textEditor, !textEditor.frame.contains(point) {
+            commitText()
+            return
+        }
         guard selection.contains(point), let activeTool else { return }
         let clamped = SelectionGeometry.clamped(point, to: selection)
         if activeTool == .text {
@@ -652,6 +659,29 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         }
     }
 
+    func textDidChange(_ notification: Notification) {
+        guard let view = notification.object as? NSTextView, view === textView else { return }
+        fitTextEditor()
+    }
+
+    private func fitTextEditor() {
+        guard let view = textView, let editor = textEditor, let selection else { return }
+        let font = view.font ?? EditorRenderer.font(size: selectedFontSize)
+        let size = font.pointSize
+        var frame = editor.frame
+        if textAutoWidth {
+            let natural = EditorRenderer.textBounds(view.string, at: .zero, fontSize: size).width
+            frame.size.width = min(max(natural + size, size * 2) + 8, selection.maxX - frame.minX)
+        }
+        let textHeight = EditorRenderer.textBounds(view.string.isEmpty ? " " : view.string, at: .zero,
+                                                   width: frame.width - 8, fontSize: size).height
+        frame.size.height = min(max(textHeight, ceil(font.ascender - font.descender + font.leading)) + 8, selection.maxY - frame.minY)
+        guard frame != editor.frame else { return }
+        editor.frame = frame
+        view.textContainer?.containerSize = CGSize(width: max(1, frame.width - 8), height: .greatestFiniteMagnitude)
+        view.frame.size = editor.contentSize
+    }
+
     func textDidEndEditing(_ notification: Notification) {
         guard let view = notification.object as? NSTextView, view === textView else { return }
         commitText()
@@ -758,6 +788,7 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         if let view = textView {
             view.textColor = color
             view.typingAttributes[.foregroundColor] = color
+            view.insertionPointColor = color
             return
         }
         guard let index = selectedTextIndex, history.annotations.indices.contains(index),
@@ -775,6 +806,7 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         if let view = textView {
             view.font = EditorRenderer.font(size: size)
             view.typingAttributes[.font] = EditorRenderer.font(size: size)
+            fitTextEditor()
             return
         }
         guard let index = selectedTextIndex, history.annotations.indices.contains(index),
@@ -813,30 +845,36 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         guard let selection else { return }
         var text = ""
         var color = selectedColor
-        var rect = box ?? CGRect(origin: point, size: CGSize(width: min(300, selection.width), height: min(120, selection.height)))
+        textAutoWidth = box == nil
+        var rect = box ?? CGRect(origin: point, size: CGSize(width: 40, height: 30))
         if let index, case let .text(value, origin, originalColor, width, fontSize) = history.annotations[index] {
             text = value
             color = originalColor
             selectedFontSize = fontSize
             toolbar.textFontSize = fontSize
             let size = EditorRenderer.textBounds(value, at: origin, width: width, fontSize: fontSize).size
+            textAutoWidth = false
             rect = CGRect(x: origin.x - 4, y: origin.y - 4,
-                          width: min(width + 8, selection.width), height: max(120, size.height + 8))
+                          width: min(width + 8, selection.width), height: size.height + 8)
         }
         rect.size.width = min(rect.width, selection.width)
         rect.size.height = min(rect.height, selection.height)
         rect = SelectionGeometry.moved(rect, by: .zero, within: selection)
+        // Transparent, borderless-looking editor: what you type is what gets exported.
         let editor = NSScrollView(frame: rect)
-        editor.hasVerticalScroller = true
-        editor.scrollerStyle = .overlay
+        editor.hasVerticalScroller = false
+        editor.drawsBackground = false
         editor.wantsLayer = true
+        editor.layer?.cornerRadius = 3
         editor.layer?.borderWidth = 1
-        editor.layer?.borderColor = NSColor.controlAccentColor.cgColor
+        editor.layer?.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.7).cgColor
+        editor.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
         let view = AnnotationTextView(frame: CGRect(origin: .zero, size: editor.contentSize))
         view.delegate = self
         view.font = EditorRenderer.font(size: selectedFontSize)
         view.textColor = color
-        view.backgroundColor = NSColor.textBackgroundColor.withAlphaComponent(0.95)
+        view.drawsBackground = false
+        view.insertionPointColor = color
         view.isRichText = false
         view.isHorizontallyResizable = false
         view.isVerticallyResizable = true
@@ -849,7 +887,7 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         view.textContainer?.containerSize = CGSize(width: max(1, rect.width - 8), height: .greatestFiniteMagnitude)
         view.string = text
         view.typingAttributes = [.font: EditorRenderer.font(size: selectedFontSize), .foregroundColor: color]
-        view.toolTip = "Enter: new line · ⌘Enter: finish · Esc: cancel"
+        view.toolTip = "Enter: new line · ⌘Enter or click outside: finish · Esc: cancel"
         view.setAccessibilityLabel("Screenshot text")
         view.onCommit = { [weak self] in self?.commitText() }
         view.onCancel = { [weak self] in self?.cancelText() }
@@ -859,6 +897,7 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         editingTextIndex = index
         addSubview(editor)
         window?.makeFirstResponder(view)
+        fitTextEditor()
         if let selection = self.selection { invalidate(selection) }
     }
 
