@@ -23,7 +23,6 @@ final class CaptureCoordinator {
             return
         }
         editor?.finish()
-        guard savePendingCaptureBeforeQuit() else { return }
         pending = nil
         guard ensureScreenCapturePermission() else { return }
 
@@ -226,7 +225,6 @@ final class CaptureCoordinator {
             originalPNGData: editableImage == nil ? pending.data : nil,
             onCopy: { [weak self] data in
                 guard let self, self.copyToClipboard(data) else { return false }
-                self.updatePending(data)
                 return true
             },
             onSave: { [weak self] data in
@@ -234,28 +232,21 @@ final class CaptureCoordinator {
                 self.updatePending(data)
                 return self.saveManually()
             }
-        ) { [weak self] data in
-            guard let self else { return }
-            if let data { self.updatePending(data) }
-            self.editor = nil
-            if self.savePendingCaptureBeforeQuit() { self.pending = nil }
+        ) { [weak self] _ in
+            self?.editor = nil
+            self?.pending = nil
         }
         self.editor = editor
         editor.show()
     }
 
     private func updatePending(_ data: Data) {
-        guard var pending else { return }
-        if pending.data != data {
-            pending.savedURL = nil
-        }
-        pending.data = data
-        self.pending = pending
+        pending?.data = data
     }
 
     @discardableResult
     private func saveManually() -> Bool {
-        guard var pending else { return false }
+        guard let pending else { return false }
         NSApp.activate(ignoringOtherApps: true)
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.png]
@@ -265,8 +256,6 @@ final class CaptureCoordinator {
         guard panel.runModal() == .OK, let url = panel.url else { return false }
         do {
             try pending.data.write(to: url, options: .atomic)
-            pending.savedURL = url
-            self.pending = pending
             UserDefaults.standard.set(url.deletingLastPathComponent().path, forKey: saveFolderKey)
             return true
         } catch {
@@ -279,30 +268,6 @@ final class CaptureCoordinator {
         if let path = UserDefaults.standard.string(forKey: saveFolderKey) { return URL(fileURLWithPath: path, isDirectory: true) }
         return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Desktop", isDirectory: true)
-    }
-
-    @discardableResult
-    func savePendingCaptureBeforeQuit() -> Bool {
-        if let data = editor?.currentPNGData() { updatePending(data) }
-        guard var pending else { return true }
-        if pending.savedURL != nil { return true }
-        let folder = saveFolder()
-        var url = folder.appendingPathComponent(pending.filename)
-        var suffix = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            let base = (pending.filename as NSString).deletingPathExtension
-            url = folder.appendingPathComponent("\(base) \(suffix).png")
-            suffix += 1
-        }
-        do {
-            try pending.data.write(to: url, options: .atomic)
-            pending.savedURL = url
-            self.pending = pending
-            return true
-        } catch {
-            showError("Could not save the screenshot: \(error.localizedDescription)")
-            return false
-        }
     }
 
     private func orderedCaptureableWindows(_ windows: [SCWindow], on displayFrame: CGRect) -> [SCWindow] {
@@ -374,7 +339,6 @@ private struct PendingCapture {
     var data: Data
     let filename: String
     let screen: NSScreen
-    var savedURL: URL?
 }
 
 private struct WindowTarget {

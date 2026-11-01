@@ -80,10 +80,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.terminate(nil)
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        captureCoordinator.savePendingCaptureBeforeQuit() ? .terminateNow : .terminateCancel
-    }
-
     @objc private func setCaptureShortcut() {
         if let shortcutPanel { shortcutPanel.makeKeyAndOrderFront(nil); return }
         let panel = NSPanel(contentRect: CGRect(x: 0, y: 0, width: 350, height: 130),
