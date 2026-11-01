@@ -6,6 +6,8 @@ enum EditorTool: Int, CaseIterable {
     case line
     case arrow
     case highlighter
+    case pixelate
+    case step
     case text
     case crop
 
@@ -16,6 +18,8 @@ enum EditorTool: Int, CaseIterable {
         case .line: "line.diagonal"
         case .arrow: "arrow.up.right"
         case .highlighter: "highlighter"
+        case .pixelate: "mosaic"
+        case .step: "1.circle"
         case .text: "textformat"
         case .crop: "crop"
         }
@@ -28,9 +32,95 @@ enum EditorTool: Int, CaseIterable {
         case .line: "Line"
         case .arrow: "Arrow"
         case .highlighter: "Highlighter"
+        case .pixelate: "Blur"
+        case .step: "Step Number"
         case .text: "Text"
         case .crop: "Crop"
         }
+    }
+
+    /// Single-key shortcut shown in tooltips and handled by the canvas.
+    var shortcutKey: String {
+        switch self {
+        case .pencil: "p"
+        case .rectangle: "r"
+        case .line: "l"
+        case .arrow: "a"
+        case .highlighter: "h"
+        case .pixelate: "b"
+        case .step: "n"
+        case .text: "t"
+        case .crop: "c"
+        }
+    }
+
+    static func forShortcut(_ key: String) -> EditorTool? {
+        allCases.first { $0.shortcutKey == key }
+    }
+}
+
+enum StrokeWidth {
+    static let range: ClosedRange<CGFloat> = 1...40
+
+    static func isValid(_ width: CGFloat) -> Bool { width.isFinite && range.contains(width) }
+}
+
+/// Remembers the last color, width, and recently used colors between captures.
+enum EditorPreferences {
+    static let defaultColor = NSColor.systemRed
+    static let defaultWidth: CGFloat = 3
+    static let maximumRecentColors = 6
+
+    private static let colorKey = "editorColor"
+    private static let widthKey = "editorStrokeWidth"
+    private static let recentColorsKey = "editorRecentColors"
+
+    /// Tests start every editor from the same defaults.
+    static var store: UserDefaults? = ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil ? .standard : nil
+
+    static var color: NSColor {
+        get { store?.string(forKey: colorKey).flatMap(NSColor.init(hex:)) ?? defaultColor }
+        set { store?.set(newValue.hexString, forKey: colorKey) }
+    }
+
+    static var width: CGFloat {
+        get {
+            let value = CGFloat(store?.double(forKey: widthKey) ?? 0)
+            return StrokeWidth.isValid(value) ? value : defaultWidth
+        }
+        set { if StrokeWidth.isValid(newValue) { store?.set(Double(newValue), forKey: widthKey) } }
+    }
+
+    static var recentColors: [NSColor] {
+        (store?.stringArray(forKey: recentColorsKey) ?? []).compactMap(NSColor.init(hex:))
+    }
+
+    static func addRecentColor(_ color: NSColor) {
+        guard let hex = color.hexString else { return }
+        var hexes = store?.stringArray(forKey: recentColorsKey) ?? []
+        hexes.removeAll { $0 == hex }
+        hexes.insert(hex, at: 0)
+        store?.set(Array(hexes.prefix(maximumRecentColors)), forKey: recentColorsKey)
+    }
+}
+
+extension NSColor {
+    convenience init?(hex: String) {
+        let digits = hex.hasPrefix("#") ? String(hex.dropFirst()) : hex
+        guard digits.count == 8, let value = UInt32(digits, radix: 16) else { return nil }
+        self.init(
+            srgbRed: CGFloat((value >> 24) & 0xFF) / 255,
+            green: CGFloat((value >> 16) & 0xFF) / 255,
+            blue: CGFloat((value >> 8) & 0xFF) / 255,
+            alpha: CGFloat(value & 0xFF) / 255
+        )
+    }
+
+    var hexString: String? {
+        guard let rgb = usingColorSpace(.sRGB) else { return nil }
+        let components = [rgb.redComponent, rgb.greenComponent, rgb.blueComponent, rgb.alphaComponent]
+            .map { UInt32((min(max($0, 0), 1) * 255).rounded()) }
+        return String(format: "#%02X%02X%02X%02X", components[0], components[1], components[2], components[3])
     }
 }
 
@@ -45,6 +135,8 @@ enum Annotation {
     case line(CGPoint, CGPoint, AnnotationStyle)
     case arrow(CGPoint, CGPoint, AnnotationStyle)
     case highlighter([CGPoint], AnnotationStyle)
+    case pixelate(CGRect)
+    case step(Int, CGPoint, AnnotationStyle)
     case text(String, CGPoint, NSColor, width: CGFloat = .greatestFiniteMagnitude, fontSize: CGFloat = 18)
 }
 
@@ -185,6 +277,25 @@ enum CaptureGeometry {
 }
 
 enum ShapeGeometry {
+    /// Shift-drag keeps rectangles square and snaps lines to 45° steps.
+    static func constrained(tool: EditorTool, start: CGPoint, end: CGPoint) -> CGPoint {
+        let dx = end.x - start.x, dy = end.y - start.y
+        switch tool {
+        case .rectangle, .pixelate:
+            let side = max(abs(dx), abs(dy))
+            return CGPoint(x: start.x + (dx < 0 ? -side : side), y: start.y + (dy < 0 ? -side : side))
+        case .line, .arrow:
+            let step = CGFloat.pi / 4
+            let angle = (atan2(dy, dx) / step).rounded() * step
+            let length = hypot(dx, dy)
+            return CGPoint(x: start.x + length * cos(angle), y: start.y + length * sin(angle))
+        default:
+            return end
+        }
+    }
+
+    static func stepRadius(for width: CGFloat) -> CGFloat { max(11, width * 2 + 8) }
+
     static func style(for annotation: Annotation) -> AnnotationStyle? {
         switch annotation {
         case let .rectangle(_, style), let .line(_, _, style), let .arrow(_, _, style): style

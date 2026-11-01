@@ -87,7 +87,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        let textTool = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Text" })
+        let textTool = try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Text" })
         textTool.performClick(nil)
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(
@@ -139,7 +139,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Text" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Text" }).performClick(nil)
         func event(_ type: NSEvent.EventType, _ point: CGPoint, clicks: Int = 1) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(
                 with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
@@ -202,7 +202,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Text" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Text" }).performClick(nil)
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(
                 with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
@@ -276,7 +276,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Text" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Text" }).performClick(nil)
         func event(_ type: NSEvent.EventType, _ point: CGPoint, clicks: Int = 1) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(
                 with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
@@ -348,7 +348,7 @@ final class XShotTests: XCTestCase {
         undo.performClick(nil)
         XCTAssertEqual(canvas.currentPNGData(), resized)
         XCTAssertEqual(sizeButton.title, "32 pt")
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Pencil" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Pencil" }).performClick(nil)
         XCTAssertEqual(sizeButton.title, "3 px")
     }
 
@@ -359,7 +359,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        let textTool = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Text" })
+        let textTool = try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Text" })
         textTool.performClick(nil)
         toolbar.onFontSize?(32)
         func event(_ type: NSEvent.EventType, clicks: Int = 1) throws -> NSEvent {
@@ -423,7 +423,7 @@ final class XShotTests: XCTestCase {
         XCTAssertEqual(canvas.currentPNGData(), try expected(.systemGreen))
         undo.performClick(nil)
         XCTAssertEqual(canvas.currentPNGData(), blue)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Pencil" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Pencil" }).performClick(nil)
         toolbar.onColor?(.systemYellow)
         XCTAssertEqual(canvas.currentPNGData(), blue)
         textTool.performClick(nil)
@@ -460,7 +460,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Text" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Text" }).performClick(nil)
         toolbar.onFontSize?(32)
         func click(_ point: CGPoint, clicks: Int = 1) throws {
             for type: NSEvent.EventType in [.leftMouseDown, .leftMouseUp] {
@@ -548,7 +548,7 @@ final class XShotTests: XCTestCase {
             let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = canvas
             let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-            try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == tool.title }).performClick(nil)
+            try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == tool.title }).performClick(nil)
             toolbar.onColor?(.systemBlue)
             toolbar.onWidth?(6)
             func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
@@ -622,7 +622,7 @@ final class XShotTests: XCTestCase {
             let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
             window.contentView = canvas
             let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-            try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == tool.title }).performClick(nil)
+            try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == tool.title }).performClick(nil)
             func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
                 try XCTUnwrap(NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
                     timestamp: 0, windowNumber: window.windowNumber, context: nil,
@@ -700,7 +700,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        let crop = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Crop" })
+        let crop = try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Crop" })
         XCTAssertTrue(crop.isEnabled)
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(with: type, location: canvas.convert(point, to: nil), modifierFlags: [],
@@ -723,7 +723,7 @@ final class XShotTests: XCTestCase {
         let expanded = try XCTUnwrap(NSBitmapImageRep(data: try XCTUnwrap(canvas.currentPNGData())))
         XCTAssertEqual(expanded.pixelsWide, 320)
         XCTAssertEqual(expanded.pixelsHigh, 340)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Line" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Line" }).performClick(nil)
         try drag(CGPoint(x: 250, y: 60), CGPoint(x: 300, y: 100))
         crop.performClick(nil)
         try drag(CGPoint(x: 380, y: 200), CGPoint(x: 390, y: 240))
@@ -783,7 +783,7 @@ final class XShotTests: XCTestCase {
         let window = NSWindow(contentRect: canvas.bounds, styleMask: .borderless, backing: .buffered, defer: false)
         window.contentView = canvas
         let toolbar = try XCTUnwrap(canvas.subviews.compactMap { $0 as? EditorToolbar }.first)
-        let crop = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Crop" })
+        let crop = try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Crop" })
         let undo = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Undo" })
         let redo = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Redo" })
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
@@ -811,7 +811,7 @@ final class XShotTests: XCTestCase {
         try drag(CGPoint(x: 250, y: 200), CGPoint(x: 250, y: 200))
         try drag(CGPoint(x: 900, y: 600), CGPoint(x: 901, y: 601))
         XCTAssertEqual(canvas.currentPNGData(), moved)
-        try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Line" }).performClick(nil)
+        try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Line" }).performClick(nil)
         toolbar.onColor?(.systemGreen)
         try drag(CGPoint(x: 180, y: 150), CGPoint(x: 250, y: 200))
         let drawn = try XCTUnwrap(canvas.currentPNGData())
@@ -1059,7 +1059,7 @@ final class XShotTests: XCTestCase {
         XCTAssertFalse(didClose)
         XCTAssertTrue(panel.isVisible)
 
-        let rectangle = try XCTUnwrap(buttons(in: toolbar).first { $0.toolTip == "Rectangle" })
+        let rectangle = try XCTUnwrap(buttons(in: toolbar).first { $0.accessibilityLabel() == "Rectangle" })
         rectangle.performClick(nil)
         func event(_ type: NSEvent.EventType, _ point: CGPoint) throws -> NSEvent {
             try XCTUnwrap(NSEvent.mouseEvent(
@@ -1156,6 +1156,74 @@ final class XShotTests: XCTestCase {
             result.append(contentsOf: buttons(in: subview))
         }
         return result
+    }
+
+    func testCanvasLayerShowsScreenshotUpright() throws {
+        // Top half red, bottom half blue in a flipped (top-left) coordinate space.
+        let image = NSImage(size: CGSize(width: 40, height: 40), flipped: true) { _ in
+            NSColor.red.setFill(); CGRect(x: 0, y: 0, width: 40, height: 20).fill()
+            NSColor.blue.setFill(); CGRect(x: 0, y: 20, width: 40, height: 20).fill()
+            return true
+        }
+        let canvas = EditorCanvasView(image: image, pixelScale: 1, backgroundImage: NSImage(size: CGSize(width: 40, height: 40)),
+                                      imageBounds: CGRect(x: 0, y: 0, width: 40, height: 40), canvasSize: CGSize(width: 40, height: 40))
+        let window = NSWindow(contentRect: canvas.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window.contentView = canvas
+        canvas.displayIfNeeded()
+        let layer = try XCTUnwrap(canvas.layer)
+        let context = try XCTUnwrap(CGContext(data: nil, width: 40, height: 40, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        if layer.isGeometryFlipped || layer.contentsAreFlipped() {
+            context.translateBy(x: 0, y: 40)
+            context.scaleBy(x: 1, y: -1)
+        }
+        layer.render(in: context)
+        let bitmap = NSBitmapImageRep(cgImage: try XCTUnwrap(context.makeImage()))
+        let top = try XCTUnwrap(bitmap.colorAt(x: 20, y: 5)?.usingColorSpace(.sRGB))
+        let bottom = try XCTUnwrap(bitmap.colorAt(x: 20, y: 35)?.usingColorSpace(.sRGB))
+        XCTAssertGreaterThan(top.redComponent, 0.8)
+        XCTAssertGreaterThan(bottom.blueComponent, 0.8)
+    }
+
+    func testShiftConstraintSquaresRectanglesAndSnapsLines() {
+        let square = ShapeGeometry.constrained(tool: .rectangle, start: .zero, end: CGPoint(x: -30, y: 10))
+        XCTAssertEqual(square, CGPoint(x: -30, y: 30))
+        let snapped = ShapeGeometry.constrained(tool: .line, start: .zero, end: CGPoint(x: 100, y: 8))
+        XCTAssertEqual(snapped.x, hypot(100, 8), accuracy: 0.001)
+        XCTAssertEqual(snapped.y, 0, accuracy: 0.001)
+        let diagonal = ShapeGeometry.constrained(tool: .arrow, start: .zero, end: CGPoint(x: 50, y: 45))
+        XCTAssertEqual(diagonal.x, diagonal.y, accuracy: 0.001)
+    }
+
+    func testColorHexRoundTripsAndToolShortcutsAreUnique() throws {
+        let color = NSColor(srgbRed: 0.2, green: 0.4, blue: 0.6, alpha: 0.8)
+        let hex = try XCTUnwrap(color.hexString)
+        XCTAssertEqual(NSColor(hex: hex)?.hexString, hex)
+        XCTAssertNil(NSColor(hex: "#12"))
+        XCTAssertEqual(Set(EditorTool.allCases.map(\.shortcutKey)).count, EditorTool.allCases.count)
+        XCTAssertTrue(StrokeWidth.isValid(17))
+        XCTAssertFalse(StrokeWidth.isValid(0))
+        XCTAssertFalse(StrokeWidth.isValid(.infinity))
+    }
+
+    func testPixelateAndStepAnnotationsChangeExport() throws {
+        let size = CGSize(width: 60, height: 60)
+        let image = NSImage(size: size, flipped: true) { _ in
+            for x in 0..<60 { (x % 2 == 0 ? NSColor.black : NSColor.white).setFill(); CGRect(x: x, y: 0, width: 1, height: 60).fill() }
+            return true
+        }
+        let bounds = CGRect(origin: .zero, size: size)
+        func render(_ annotations: [Annotation]) throws -> NSBitmapImageRep {
+            let data = try XCTUnwrap(EditorRenderer.renderPNG(image: image, displayBounds: bounds, selection: bounds, annotations: annotations, scale: 1))
+            return try XCTUnwrap(NSBitmapImageRep(data: data))
+        }
+        let pixelated = try render([.pixelate(CGRect(x: 0, y: 0, width: 30, height: 30))])
+        // Stripes inside the pixelated area become one averaged block.
+        XCTAssertEqual(pixelated.colorAt(x: 2, y: 2), pixelated.colorAt(x: 3, y: 2))
+        XCTAssertNotEqual(pixelated.colorAt(x: 42, y: 42), pixelated.colorAt(x: 43, y: 42))
+        let step = try render([.step(1, CGPoint(x: 30, y: 30), AnnotationStyle(color: .systemBlue, width: 3))])
+        let edge = try XCTUnwrap(step.colorAt(x: 30, y: 19)?.usingColorSpace(.sRGB))
+        XCTAssertGreaterThan(edge.blueComponent, 0.6)
     }
 
     private func renderPreviewPNG(image: NSImage, size: CGSize) -> Data? {

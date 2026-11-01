@@ -176,15 +176,14 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
 
     private let image: NSImage
     private let pixelScale: CGFloat
-    private let backgroundImage: NSImage?
     private let imageBounds: CGRect
     private let history: AnnotationHistory
     private let toolbar = EditorToolbar()
     private var toolbarOrigin: CGPoint?
     private var selection: CGRect?
     private var activeTool: EditorTool?
-    private var selectedColor = NSColor.systemRed
-    private var selectedWidth: CGFloat = 3
+    private var selectedColor = EditorPreferences.color
+    private var selectedWidth = EditorPreferences.width
     private var selectedFontSize: CGFloat = 18
     private var interaction: CanvasInteraction?
     private var currentStrokePoints: [CGPoint] = []
@@ -197,8 +196,14 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
     private var editingTextIndex: Int?
     private var selectedTextIndex: Int?
     private var selectedShapeIndex: Int?
+    private let overlay = AnnotationOverlayView()
+    /// The frozen screen, composited once and shown through the layer so drags
+    /// never re-blit a full-screen bitmap.
+    private var screenImage: CGImage?
+    private lazy var pixelSource: PixelSource? = screenImage.flatMap { PixelSource(image: $0, in: bounds) }
 
     override var isFlipped: Bool { true }
+    override var wantsUpdateLayer: Bool { true }
     override var acceptsFirstResponder: Bool { true }
 
     init(
@@ -214,7 +219,6 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
     ) {
         self.image = image
         self.pixelScale = pixelScale
-        self.backgroundImage = backgroundImage
         self.imageBounds = imageBounds ?? CGRect(origin: .zero, size: image.size)
         self.selectionOnly = selectionOnly
         self.originalPNGData = originalPNGData
@@ -222,6 +226,14 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         super.init(frame: CGRect(origin: .zero, size: canvasSize ?? backgroundImage?.size ?? image.size))
         selection = initialSelection
         self.selectionLocked = selectionLocked
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        screenImage = Self.compositeScreen(image: image, imageBounds: self.imageBounds,
+                                           backgroundImage: backgroundImage, size: bounds.size, scale: pixelScale)
+        overlay.frame = bounds
+        overlay.autoresizingMask = [.width, .height]
+        overlay.canvas = self
+        addSubview(overlay)
         toolbar.frame.size = toolbar.preferredSize
         toolbar.updateShadowPath()
         addSubview(toolbar)
@@ -230,6 +242,35 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
     }
 
     required init?(coder: NSCoder) { nil }
+
+    override func updateLayer() {
+        layer?.backgroundColor = NSColor.black.cgColor
+        layer?.contentsGravity = .resize
+        layer?.contents = screenImage
+    }
+
+    private static func compositeScreen(image: NSImage, imageBounds: CGRect, backgroundImage: NSImage?, size: CGSize, scale: CGFloat) -> CGImage? {
+        // Common case: the capture already covers the whole canvas, so reuse it without a copy.
+        if backgroundImage == nil, imageBounds == CGRect(origin: .zero, size: size),
+           let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) {
+            return cgImage
+        }
+        let width = Int((size.width * scale).rounded()), height = Int((size.height * scale).rounded())
+        guard width > 0, height > 0, let context = CGContext(
+            data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        context.translateBy(x: 0, y: CGFloat(height))
+        context.scaleBy(x: scale, y: -scale)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(cgContext: context, flipped: true)
+        context.setFillColor(NSColor.black.cgColor)
+        context.fill(CGRect(origin: .zero, size: size))
+        if let backgroundImage { EditorRenderer.drawImage(backgroundImage, in: CGRect(origin: .zero, size: size)) }
+        EditorRenderer.drawImage(image, in: imageBounds, operation: backgroundImage == nil ? .copy : .sourceOver)
+        NSGraphicsContext.restoreGraphicsState()
+        return context.makeImage()
+    }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: selectionLocked && activeTool == nil ? .arrow : .crosshair)
@@ -265,19 +306,9 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
-        // AppKit already clips this draw pass to dirtyRect. Drawing the image in its
-        // stable full-screen coordinate space avoids remapping partial NSImage source
-        // rectangles, whose Y axis is opposite to this flipped canvas.
-        if let backgroundImage {
-            EditorRenderer.drawImage(backgroundImage, in: bounds)
-            EditorRenderer.drawImage(image, in: imageBounds, operation: .sourceOver)
-        } else {
-            EditorRenderer.drawImage(image, in: imageBounds)
-        }
-
+    /// Draws the dim mask, annotations, and handles above the layer-backed screenshot.
+    /// Only annotations that intersect the dirty rectangle are rendered.
+    fileprivate func drawOverlay(_ dirtyRect: NSRect, in context: CGContext) {
         if let selection {
             let mask = CGMutablePath()
             mask.addRect(bounds)
@@ -295,15 +326,14 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
                 if let previewAnnotation { annotations[index] = previewAnnotation }
             default: break
             }
-            EditorRenderer.drawAnnotations(annotations, in: context)
-            if let previewAnnotation, case .drawing = interaction {
-                EditorRenderer.drawAnnotations([previewAnnotation], in: context)
-            }
+            if case .drawing = interaction, let previewAnnotation { annotations.append(previewAnnotation) }
+            let visible = annotations.filter { annotationBounds($0).intersects(dirtyRect) }
+            EditorRenderer.drawAnnotations(visible, in: context, pixelSource: pixelSource)
             if case let .drawing(tool, start) = interaction,
                (tool == .pencil || tool == .highlighter),
                let end = currentStrokePoints.last,
                let stroke = makeAnnotation(tool: tool, start: start, end: end, points: currentStrokePoints) {
-                EditorRenderer.drawAnnotations([stroke], in: context)
+                EditorRenderer.drawAnnotations([stroke], in: context, pixelSource: pixelSource)
             }
             if let annotation = selectedShape() {
                 context.setFillColor(NSColor.controlAccentColor.cgColor)
@@ -494,7 +524,8 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
                 let changedPoints = Array(currentStrokePoints.suffix(3))
                 invalidate(pointsBounds(changedPoints).insetBy(dx: -width - 2, dy: -width - 2))
             } else {
-                previewAnnotation = makeAnnotation(tool: tool, start: start, end: current, points: currentStrokePoints)
+                let end = event.modifierFlags.contains(.shift) ? ShapeGeometry.constrained(tool: tool, start: start, end: current) : current
+                previewAnnotation = makeAnnotation(tool: tool, start: start, end: SelectionGeometry.clamped(end, to: selection), points: currentStrokePoints)
                 invalidateAnnotations(oldPreview, previewAnnotation)
             }
         }
@@ -559,7 +590,10 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
             }
         case let .drawing(tool, start):
             guard let selection else { return }
-            let end = SelectionGeometry.clamped(point, to: selection)
+            var end = SelectionGeometry.clamped(point, to: selection)
+            if event.modifierFlags.contains(.shift) {
+                end = SelectionGeometry.clamped(ShapeGeometry.constrained(tool: tool, start: start, end: end), to: selection)
+            }
             if let annotation = makeAnnotation(tool: tool, start: start, end: end, points: currentStrokePoints) {
                 history.append(annotation)
                 if ShapeGeometry.tool(for: annotation) != nil { selectedShapeIndex = history.annotations.count - 1 }
@@ -580,8 +614,27 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
             history.remove(at: index)
             updateHistoryButtons()
             if let selection { invalidate(selection) }
+        } else if textView == nil, handleShortcut(event) {
+            return
         } else {
             super.keyDown(with: event)
+        }
+    }
+
+    private func handleShortcut(_ event: NSEvent) -> Bool {
+        let modifiers = event.modifierFlags.intersection([.command, .control, .option])
+        guard modifiers.isEmpty, interaction == nil, selection != nil, !toolbar.isHidden,
+              let key = event.charactersIgnoringModifiers?.lowercased() else { return false }
+        switch key {
+        case "[", "]":
+            let delta: CGFloat = key == "]" ? 1 : -1
+            if activeTool == .text { setTextFontSize(selectedFontSize + delta * 2) }
+            else { setAnnotationWidth(min(max(selectedWidth + delta, StrokeWidth.range.lowerBound), StrokeWidth.range.upperBound)) }
+            return true
+        default:
+            guard let tool = EditorTool.forShortcut(key), tool != .crop || !selectionLocked else { return false }
+            toolbar.onTool?(tool)
+            return true
         }
     }
 
@@ -627,6 +680,8 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         toolbar.onCopy = { [weak self] in self?.copyImage() }
         toolbar.onSave = { [weak self] in self?.saveImage() }
         toolbar.onClose = { [weak self] in self?.onCancel?() }
+        toolbar.annotationColor = selectedColor
+        toolbar.strokeWidth = selectedWidth
     }
 
     private func makeAnnotation(tool: EditorTool, start: CGPoint, end: CGPoint, points: [CGPoint]) -> Annotation? {
@@ -643,6 +698,12 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
             return hypot(end.x - start.x, end.y - start.y) > 1 ? .arrow(start, end, style) : nil
         case .highlighter:
             return .highlighter(points.isEmpty ? [start, end] : points, style)
+        case .pixelate:
+            let rect = SelectionGeometry.normalized(from: start, to: end)
+            return rect.width > 2 && rect.height > 2 ? .pixelate(rect) : nil
+        case .step:
+            let next = history.annotations.reduce(0) { if case let .step(number, _, _) = $1 { max($0, number) } else { $0 } } + 1
+            return .step(next, end, style)
         case .text, .crop:
             return nil
         }
@@ -664,8 +725,9 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
     }
 
     private func setAnnotationWidth(_ width: CGFloat) {
-        guard [CGFloat(1), 3, 6].contains(width) else { return }
+        guard StrokeWidth.isValid(width) else { return }
         selectedWidth = width
+        EditorPreferences.width = width
         toolbar.strokeWidth = width
         guard let annotation = selectedShape(), var style = ShapeGeometry.style(for: annotation) else { return }
         style.width = width
@@ -684,6 +746,8 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
 
     private func setAnnotationColor(_ color: NSColor) {
         selectedColor = color
+        EditorPreferences.color = color
+        EditorPreferences.addRecentColor(color)
         toolbar.annotationColor = color
         if let annotation = selectedShape(), var style = ShapeGeometry.style(for: annotation) {
             style.color = color
@@ -1044,6 +1108,12 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         case let .text(text, point, _, width, fontSize):
             rect = EditorRenderer.textBounds(text, at: point, width: width, fontSize: fontSize)
             padding = 2
+        case let .pixelate(value):
+            rect = value
+            padding = 1
+        case let .step(_, center, style):
+            rect = CGRect(origin: center, size: .zero)
+            padding = ShapeGeometry.stepRadius(for: style.width) + 4
         }
         return rect.insetBy(dx: -padding, dy: -padding)
     }
@@ -1067,7 +1137,21 @@ final class EditorCanvasView: NSView, NSTextViewDelegate {
         guard !rect.isNull else { return }
         let clipped = rect.intersection(bounds)
         guard !clipped.isNull, !clipped.isEmpty else { return }
-        setNeedsDisplay(clipped)
+        overlay.setNeedsDisplay(clipped)
+    }
+}
+
+/// Transparent drawing surface for annotations. Mouse events pass through to the canvas.
+private final class AnnotationOverlayView: NSView {
+    weak var canvas: EditorCanvasView?
+
+    override var isFlipped: Bool { true }
+    override var isOpaque: Bool { false }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+    override func draw(_ dirtyRect: NSRect) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        canvas?.drawOverlay(dirtyRect, in: context)
     }
 }
 
@@ -1098,6 +1182,7 @@ final class EditorToolbar: NSVisualEffectView {
     private let saveButton = ToolbarActionButton(title: "Save", symbol: "square.and.arrow.down", prominent: true, width: 70)
     var strokeWidth: CGFloat = 3 { didSet { updateSizeButton() } }
     private var colorPopover: NSPopover?
+    private var widthPopover: NSPopover?
     private var feedbackTask: Task<Void, Never>?
 
     private(set) lazy var preferredSize: CGSize = {
@@ -1141,6 +1226,7 @@ final class EditorToolbar: NSVisualEffectView {
 
         for tool in EditorTool.allCases {
             let button = iconButton(symbol: tool.symbolName, label: tool.title, action: #selector(selectTool(_:)))
+            button.toolTip = "\(tool.title) (\(tool.shortcutKey.uppercased()))"
             button.tag = tool.rawValue
             toolButtons[tool] = button
             stack.addArrangedSubview(button)
@@ -1242,17 +1328,40 @@ final class EditorToolbar: NSVisualEffectView {
             (.systemRed, "Red"), (.systemOrange, "Orange"), (.systemYellow, "Yellow"), (.systemGreen, "Green"),
             (.systemBlue, "Blue"), (.systemPurple, "Purple"), (.black, "Black"), (.white, "White")
         ]
+        let recents = EditorPreferences.recentColors
+            .filter { recent in !choices.contains { $0.0.hexString == recent.hexString } }
+            .map { ($0, $0.hexString.map { "Recent \($0.prefix(7))" } ?? "Recent") }
         let popover = NSPopover()
-        let controller = ColorPaletteViewController(colors: choices, selectedColor: colorButton.color) { [weak self, weak popover] color in
+        let controller = ColorPaletteViewController(colors: choices, recentColors: recents, selectedColor: colorButton.color) { [weak self, weak popover] color in
             self?.colorButton.color = color
             self?.onColor?(color)
             popover?.performClose(nil)
+        } onCustom: { [weak self, weak popover] in
+            popover?.performClose(nil)
+            self?.showColorPanel()
         }
         popover.behavior = .transient
         popover.contentViewController = controller
-        popover.contentSize = CGSize(width: 166, height: 86)
+        popover.contentSize = controller.view.frame.size
         colorPopover = popover
         popover.show(relativeTo: colorButton.bounds, of: colorButton, preferredEdge: .maxY)
+    }
+
+    private func showColorPanel() {
+        let panel = NSColorPanel.shared
+        panel.showsAlpha = true
+        panel.isContinuous = false
+        panel.color = colorButton.color
+        panel.setTarget(self)
+        panel.setAction(#selector(colorPanelChanged(_:)))
+        // The editor floats above normal windows; keep the picker reachable.
+        panel.level = NSWindow.Level(rawValue: (window?.level.rawValue ?? NSWindow.Level.floating.rawValue) + 1)
+        panel.orderFront(nil)
+    }
+
+    @objc private func colorPanelChanged(_ sender: NSColorPanel) {
+        colorButton.color = sender.color
+        onColor?(sender.color)
     }
 
     @objc private func showWidthMenu() {
@@ -1268,25 +1377,16 @@ final class EditorToolbar: NSVisualEffectView {
             menu.popUp(positioning: nil, at: CGPoint(x: 0, y: widthButton.bounds.maxY + 4), in: widthButton)
             return
         }
-        let labels = ["Thin — 1 px", "Medium — 3 px", "Thick — 6 px"]
-        let widths: [CGFloat] = [1, 3, 6]
-        let menu = NSMenu()
-        for index in labels.indices {
-            let item = NSMenuItem(title: labels[index], action: #selector(selectWidth(_:)), keyEquivalent: "")
-            item.target = self
-            item.tag = index
-            item.state = widths[index] == strokeWidth ? .on : .off
-            item.image = Self.strokeSample(width: widths[index])
-            menu.addItem(item)
+        let popover = NSPopover()
+        let controller = StrokeWidthViewController(width: strokeWidth, color: annotationColor) { [weak self] width in
+            self?.strokeWidth = width
+            self?.onWidth?(width)
         }
-        menu.popUp(positioning: menu.item(at: widths.firstIndex(of: strokeWidth) ?? 1), at: CGPoint(x: 0, y: widthButton.bounds.maxY + 4), in: widthButton)
-    }
-
-    @objc private func selectWidth(_ sender: NSMenuItem) {
-        let widths: [CGFloat] = [1, 3, 6]
-        let width = widths[sender.tag]
-        strokeWidth = width
-        onWidth?(width)
+        popover.behavior = .transient
+        popover.contentViewController = controller
+        popover.contentSize = controller.view.frame.size
+        widthPopover = popover
+        popover.show(relativeTo: widthButton.bounds, of: widthButton, preferredEdge: .maxY)
     }
 
     @objc private func selectFontSize(_ sender: NSMenuItem) {
@@ -1356,19 +1456,6 @@ final class EditorToolbar: NSVisualEffectView {
     private func resetExportFeedback() {
         copyButton.resetFeedback()
         saveButton.resetFeedback()
-    }
-
-    private static func strokeSample(width: CGFloat) -> NSImage {
-        NSImage(size: CGSize(width: 24, height: 14), flipped: false) { rect in
-            NSColor.labelColor.setStroke()
-            let path = NSBezierPath()
-            path.lineWidth = width
-            path.lineCapStyle = .round
-            path.move(to: CGPoint(x: 3, y: rect.midY))
-            path.line(to: CGPoint(x: rect.maxX - 3, y: rect.midY))
-            path.stroke()
-            return true
-        }
     }
 
     private func separator() -> NSBox {
@@ -1593,13 +1680,19 @@ private final class ColorPaletteViewController: NSViewController {
     private let colors: [(NSColor, String)]
     private let selectedColor: NSColor
     private let onSelect: (NSColor) -> Void
+    private let onCustom: () -> Void
 
-    init(colors: [(NSColor, String)], selectedColor: NSColor, onSelect: @escaping (NSColor) -> Void) {
-        self.colors = colors
+    init(colors: [(NSColor, String)], recentColors: [(NSColor, String)] = [], selectedColor: NSColor,
+         onSelect: @escaping (NSColor) -> Void, onCustom: @escaping () -> Void = {}) {
+        self.colors = colors + recentColors
+        self.presetCount = colors.count
         self.selectedColor = selectedColor
         self.onSelect = onSelect
+        self.onCustom = onCustom
         super.init(nibName: nil, bundle: nil)
     }
+
+    private let presetCount: Int
 
     required init?(coder: NSCoder) { nil }
 
@@ -1608,22 +1701,40 @@ private final class ColorPaletteViewController: NSViewController {
         vertical.orientation = .vertical
         vertical.alignment = .centerX
         vertical.spacing = 8
-        for rowStart in stride(from: 0, to: colors.count, by: 4) {
-            let row = NSStackView()
-            row.orientation = .horizontal
-            row.spacing = 8
-            for index in rowStart..<min(rowStart + 4, colors.count) {
-                let choice = colors[index]
-                let button = ColorSwatchButton(color: choice.0, name: choice.1, selected: choice.0.isEqual(selectedColor))
-                button.tag = index
-                button.target = self
-                button.action = #selector(selectColor(_:))
-                row.addArrangedSubview(button)
+        func addRows(_ range: Range<Int>) {
+            for rowStart in stride(from: range.lowerBound, to: range.upperBound, by: 4) {
+                let row = NSStackView()
+                row.orientation = .horizontal
+                row.spacing = 8
+                for index in rowStart..<min(rowStart + 4, range.upperBound) {
+                    let choice = colors[index]
+                    let selected = choice.0.isEqual(selectedColor) || choice.0.hexString == selectedColor.hexString
+                    let button = ColorSwatchButton(color: choice.0, name: choice.1, selected: selected)
+                    button.tag = index
+                    button.target = self
+                    button.action = #selector(selectColor(_:))
+                    row.addArrangedSubview(button)
+                }
+                vertical.addArrangedSubview(row)
             }
-            vertical.addArrangedSubview(row)
         }
+        addRows(0..<presetCount)
+        if colors.count > presetCount {
+            let label = NSTextField(labelWithString: "Recent")
+            label.font = .systemFont(ofSize: 11, weight: .medium)
+            label.textColor = .secondaryLabelColor
+            vertical.addArrangedSubview(label)
+            addRows(presetCount..<colors.count)
+        }
+        let custom = NSButton(title: "Custom Color…", target: self, action: #selector(chooseCustom))
+        custom.bezelStyle = .rounded
+        custom.controlSize = .small
+        custom.image = NSImage(systemSymbolName: "eyedropper", accessibilityDescription: nil)
+        custom.imagePosition = .imageLeading
+        vertical.addArrangedSubview(custom)
 
-        let container = NSView(frame: CGRect(origin: .zero, size: CGSize(width: 166, height: 86)))
+        let height = vertical.fittingSize.height + 24
+        let container = NSView(frame: CGRect(origin: .zero, size: CGSize(width: 166, height: height)))
         vertical.translatesAutoresizingMaskIntoConstraints = false
         container.addSubview(vertical)
         NSLayoutConstraint.activate([
@@ -1635,6 +1746,101 @@ private final class ColorPaletteViewController: NSViewController {
 
     @objc private func selectColor(_ sender: ColorSwatchButton) {
         onSelect(colors[sender.tag].0)
+    }
+
+    @objc private func chooseCustom() { onCustom() }
+}
+
+private final class StrokeWidthViewController: NSViewController {
+    private var width: CGFloat
+    private let color: NSColor
+    private let onChange: (CGFloat) -> Void
+    private let slider = NSSlider()
+    private let valueLabel = NSTextField(labelWithString: "")
+    private let preview = StrokePreviewView()
+
+    init(width: CGFloat, color: NSColor, onChange: @escaping (CGFloat) -> Void) {
+        self.width = width
+        self.color = color
+        self.onChange = onChange
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    required init?(coder: NSCoder) { nil }
+
+    override func loadView() {
+        slider.minValue = Double(StrokeWidth.range.lowerBound)
+        slider.maxValue = Double(StrokeWidth.range.upperBound)
+        slider.doubleValue = Double(width)
+        slider.isContinuous = true
+        slider.target = self
+        slider.action = #selector(sliderChanged(_:))
+        slider.setAccessibilityLabel("Line thickness")
+        slider.widthAnchor.constraint(equalToConstant: 150).isActive = true
+
+        valueLabel.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+        valueLabel.alignment = .right
+        valueLabel.widthAnchor.constraint(equalToConstant: 42).isActive = true
+
+        preview.color = color
+        preview.heightAnchor.constraint(equalToConstant: 44).isActive = true
+        preview.widthAnchor.constraint(equalToConstant: 200).isActive = true
+
+        let row = NSStackView(views: [slider, valueLabel])
+        row.orientation = .horizontal
+        row.spacing = 8
+        let presets = NSStackView(views: [1, 3, 6, 12, 24].map { value in
+            let button = NSButton(title: "\(value)", target: self, action: #selector(selectPreset(_:)))
+            button.bezelStyle = .rounded
+            button.controlSize = .small
+            button.tag = value
+            return button
+        })
+        presets.orientation = .horizontal
+        presets.spacing = 4
+        let stack = NSStackView(views: [preview, row, presets])
+        stack.orientation = .vertical
+        stack.spacing = 8
+        stack.edgeInsets = NSEdgeInsets(top: 12, left: 12, bottom: 12, right: 12)
+        stack.frame.size = stack.fittingSize
+        view = stack
+        update()
+    }
+
+    @objc private func sliderChanged(_ sender: NSSlider) {
+        width = CGFloat(sender.doubleValue.rounded())
+        update()
+        // Apply on release so one drag is one undo step.
+        if NSApp.currentEvent?.type != .leftMouseDragged { onChange(width) }
+    }
+
+    @objc private func selectPreset(_ sender: NSButton) {
+        width = CGFloat(sender.tag)
+        slider.doubleValue = Double(width)
+        update()
+        onChange(width)
+    }
+
+    private func update() {
+        valueLabel.stringValue = "\(Int(width)) px"
+        preview.width = width
+    }
+}
+
+private final class StrokePreviewView: NSView {
+    var width: CGFloat = 3 { didSet { needsDisplay = true } }
+    var color: NSColor = .systemRed { didSet { needsDisplay = true } }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let path = NSBezierPath()
+        path.lineWidth = width
+        path.lineCapStyle = .round
+        path.move(to: CGPoint(x: 12 + width / 2, y: bounds.midY))
+        path.curve(to: CGPoint(x: bounds.maxX - 12 - width / 2, y: bounds.midY),
+                   controlPoint1: CGPoint(x: bounds.midX - 30, y: bounds.minY + 4),
+                   controlPoint2: CGPoint(x: bounds.midX + 30, y: bounds.maxY - 4))
+        color.setStroke()
+        path.stroke()
     }
 }
 
