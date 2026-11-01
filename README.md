@@ -1,6 +1,16 @@
 # X-Shot
 
-X-Shot is a native, offline screenshot and annotation app for Apple Silicon Macs. Capture a full screen, a window, or a selected area from the menu bar, annotate it, then copy or save the PNG. `Shift-Command-9` starts Capture Area directly.
+X-Shot is a native, offline screenshot and annotation app for Apple Silicon Macs. Capture a full screen, a window, or a selected area from the menu bar. Each capture opens the overlay editor immediately and is copied to the clipboard. Annotate in place, drag the toolbar out of the way, then choose Copy or Save. Copy and Save show a green confirmation and keep the editor open so you can continue editing. With the Text tool active, click for a text box or drag an empty area to set its size. Text wraps to the box width; Enter adds a line and Command-Enter finishes typing. Drag existing text to reposition it or double-click to edit it. Select text and drag its left or right handle to change the box width and wrapping. Use the pt menu with the Text tool to change the font size of selected text or the text you are typing. Choose a color from the palette to recolor selected text or the text you are typing. Press Delete or Forward Delete to remove selected text when you are not typing. Undo/Redo restores deleted text as well as text moves, resizes, font sizes, colors, and edits. `Shift-Command-9` starts Capture Area by default; change it with **Set Capture Shortcut…** in the menu bar.
+
+Copy only writes to the clipboard. Save (⌘S) writes the PNG to the location you choose, starting in the last chosen folder or the Desktop. Closing the editor, starting another capture, and quitting do not save files.
+
+With the Rectangle, Arrow, or Line tool active, click the border or stroke of an existing matching shape to select it. Drag the shape to move it, drag its handles to resize it (corners for rectangles, endpoints for lines and arrows), or press Delete. Use the toolbar palette and px menu to change the selected shape's color and line thickness. Undo/Redo restores these changes. Start on an empty area to draw another shape.
+
+Pick any color with **Custom Color…** in the palette (color wheel, hex, and eyedropper); your recent colors appear in the palette. The px button opens a thickness slider from 1 to 40 px with quick presets, and `[` / `]` make lines thinner or thicker (or text smaller or larger). X-Shot remembers your last color and thickness.
+
+Use **Blur** to pixelate passwords or personal data, **Highlighter** to mark text, and **Step Number** to drop numbered markers (①②③…) for tutorials. Hold Shift while drawing to make squares and to snap lines and arrows to 45°. Single-key shortcuts switch tools: P pencil, R rectangle, L line, A arrow, H highlighter, B blur, N step number, T text, C crop.
+
+For area and full-screen captures, the editor keeps the entire frozen display. Use Crop to move or resize the screenshot region at any time, including after adding annotations. Copy and Save export only the current crop; annotations stay anchored to the frozen screen. Crop moves and resizes share Undo/Redo history with annotations, with one history entry per drag.
 
 ## Requirements
 
